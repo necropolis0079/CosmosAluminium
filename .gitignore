@@ -87,6 +87,7 @@ cv_samples/
 
 # Lambda artifacts
 lambda/**/layer/
+lambda/**/package_layer/
 lambda/**/*.zip
 response.json
 tfplan

@@ -13,7 +13,11 @@ opensearch-py>=2.4.0
 # LLM
 anthropic>=0.18.0
 
-# OCR
+# Document extraction (smart routing)
+python-docx>=0.8.11
+pdfplumber>=0.10.3
+
+# OCR (for Triple OCR pipeline)
 pytesseract>=0.3.10
 pdf2image>=1.16.3
 Pillow>=10.2.0
