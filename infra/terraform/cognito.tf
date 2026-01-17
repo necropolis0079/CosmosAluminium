@@ -153,8 +153,18 @@ resource "aws_cognito_user_pool_client" "web" {
   # OAuth configuration
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_flows_user_pool_client = true
-  allowed_oauth_scopes                 = ["email", "openid", "profile"]
-  supported_identity_providers         = ["COGNITO"]
+  allowed_oauth_scopes = [
+    "email",
+    "openid",
+    "profile",
+    "api/cv.read",
+    "api/cv.write",
+    "api/query.execute"
+  ]
+  supported_identity_providers = ["COGNITO"]
+
+  # Ensure resource server is created first (for API scopes)
+  depends_on = [aws_cognito_resource_server.api]
 
   # Callback URLs (update with actual domain)
   callback_urls = [

@@ -288,3 +288,37 @@ output "dynamodb_prompt_versions_table" {
   description = "DynamoDB prompt versions table name"
   value       = aws_dynamodb_table.prompt_versions.name
 }
+
+# -----------------------------------------------------------------------------
+# API Gateway Outputs
+# -----------------------------------------------------------------------------
+
+output "api_gateway_id" {
+  description = "ID of the HTTP API Gateway"
+  value       = aws_apigatewayv2_api.main.id
+}
+
+output "api_gateway_endpoint" {
+  description = "Invoke URL for the API Gateway (v1 stage)"
+  value       = aws_apigatewayv2_stage.v1.invoke_url
+}
+
+output "api_gateway_arn" {
+  description = "ARN of the HTTP API Gateway"
+  value       = aws_apigatewayv2_api.main.arn
+}
+
+output "api_gateway_execution_arn" {
+  description = "Execution ARN of the HTTP API Gateway"
+  value       = aws_apigatewayv2_api.main.execution_arn
+}
+
+output "health_lambda_arn" {
+  description = "ARN of the Health Lambda function"
+  value       = aws_lambda_function.health.arn
+}
+
+output "health_lambda_name" {
+  description = "Name of the Health Lambda function"
+  value       = aws_lambda_function.health.function_name
+}
