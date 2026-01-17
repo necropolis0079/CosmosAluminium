@@ -125,31 +125,45 @@ resource "aws_iam_role_policy_attachment" "lambda_dynamodb_access" {
 }
 
 # -----------------------------------------------------------------------------
-# Custom Policy - Bedrock Access
+# Custom Policy - Bedrock Access (EU Cross-Region Inference Profiles)
+# -----------------------------------------------------------------------------
+# NOTE: eu-north-1 has limited direct model availability.
+# We use EU inference profiles which route to available EU regions.
+# See: docs/DECISIONS.md - "Bedrock Model Availability in eu-north-1"
 # -----------------------------------------------------------------------------
 
 resource "aws_iam_policy" "lambda_bedrock_access" {
   name        = "${local.name_prefix}-lambda-bedrock-policy"
-  description = "Allow Lambda to access Amazon Bedrock"
+  description = "Allow Lambda to access Amazon Bedrock via EU inference profiles"
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "BedrockInvoke"
+        Sid    = "BedrockInvokeInferenceProfiles"
         Effect = "Allow"
         Action = [
           "bedrock:InvokeModel",
           "bedrock:InvokeModelWithResponseStream"
         ]
         Resource = [
-          # Claude 4.5 Sonnet
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-sonnet-4-5-20251101-v1:0",
-          # Claude 4.5 Opus
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0",
-          # Cohere Embed v3
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/cohere.embed-multilingual-v3"
+          # EU Inference Profiles for Claude models
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/eu.anthropic.claude-sonnet-4-5-*",
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/eu.anthropic.claude-opus-4-5-*",
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/eu.anthropic.claude-3-*",
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/eu.anthropic.claude-haiku-*",
+          # EU Inference Profile for Cohere Embed v4
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/eu.cohere.embed-*"
         ]
+      },
+      {
+        Sid    = "BedrockGetInferenceProfile"
+        Effect = "Allow"
+        Action = [
+          "bedrock:GetInferenceProfile",
+          "bedrock:ListInferenceProfiles"
+        ]
+        Resource = "*"
       }
     ]
   })

@@ -158,3 +158,46 @@ output "aws_region" {
   description = "AWS Region"
   value       = data.aws_region.current.name
 }
+
+# -----------------------------------------------------------------------------
+# Cognito Outputs
+# -----------------------------------------------------------------------------
+
+output "cognito_user_pool_id" {
+  description = "ID of the Cognito User Pool"
+  value       = aws_cognito_user_pool.main.id
+}
+
+output "cognito_user_pool_arn" {
+  description = "ARN of the Cognito User Pool"
+  value       = aws_cognito_user_pool.main.arn
+}
+
+output "cognito_user_pool_domain" {
+  description = "Domain of the Cognito User Pool"
+  value       = aws_cognito_user_pool_domain.main.domain
+}
+
+output "cognito_user_pool_endpoint" {
+  description = "Endpoint of the Cognito User Pool"
+  value       = aws_cognito_user_pool.main.endpoint
+}
+
+output "cognito_web_client_id" {
+  description = "ID of the Cognito Web App Client"
+  value       = aws_cognito_user_pool_client.web.id
+}
+
+output "cognito_api_client_id" {
+  description = "ID of the Cognito API Client"
+  value       = aws_cognito_user_pool_client.api.id
+}
+
+output "cognito_user_groups" {
+  description = "Cognito User Groups"
+  value = {
+    super_admin = aws_cognito_user_group.super_admin.name
+    admins      = aws_cognito_user_group.admins.name
+    hr_users    = aws_cognito_user_group.hr_users.name
+  }
+}
