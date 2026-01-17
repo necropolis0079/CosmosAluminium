@@ -51,6 +51,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "cv_uploads" {
     id     = "archive-old-cvs"
     status = "Enabled"
 
+    filter {} # Apply to all objects
+
     transition {
       days          = 90
       storage_class = "GLACIER"
@@ -72,7 +74,7 @@ resource "aws_s3_bucket" "processed_data" {
 
   tags = {
     Name    = "${local.name_prefix}-processed-${local.region_short}"
-    Purpose = "Processed CV data (text, JSON)"
+    Purpose = "Processed CV data"
   }
 }
 
@@ -151,6 +153,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "lambda_artifacts" {
   rule {
     id     = "cleanup-old-versions"
     status = "Enabled"
+
+    filter {} # Apply to all objects
 
     noncurrent_version_expiration {
       noncurrent_days = 30
