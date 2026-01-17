@@ -33,11 +33,13 @@ logger.setLevel(logging.INFO)
 # AWS clients
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
+lambda_client = boto3.client("lambda")
 
 # Environment variables
 CV_UPLOADS_BUCKET = os.environ.get("CV_UPLOADS_BUCKET", "lcmgo-cagenai-prod-cv-uploads-eun1")
 PROCESSED_BUCKET = os.environ.get("PROCESSED_BUCKET", "lcmgo-cagenai-prod-processed-eun1")
 STATE_TABLE = os.environ.get("STATE_TABLE", "lcmgo-cagenai-prod-cv-processing-state")
+CV_PARSER_FUNCTION = os.environ.get("CV_PARSER_FUNCTION", "lcmgo-cagenai-prod-cv-parser")
 
 
 class ProcessingStatus:
@@ -176,29 +178,51 @@ def process_s3_record(record: dict) -> dict:
             ContentType="application/json",
         )
 
-        # Update state to completed (for now, parsing/mapping/indexing will be separate)
+        # Update state - extraction complete, ready for parsing
         update_state(
             correlation_id,
-            ProcessingStatus.COMPLETED,
+            ProcessingStatus.EXTRACTING,
             {
                 "text_key": text_key,
                 "metadata_key": metadata_key,
                 "confidence": result["confidence"],
+                "extraction_complete": True,
             },
         )
 
         logger.info(
-            f"Successfully processed {key}: method={result['method']}, "
+            f"Extraction complete for {key}: method={result['method']}, "
             f"confidence={result['confidence']:.2f}, "
             f"chars={len(result['text'])}"
         )
 
+        # Invoke cv_parser asynchronously for parsing/mapping/indexing
+        try:
+            parser_payload = {
+                "correlation_id": correlation_id,
+                "text_key": text_key,
+                "metadata_key": metadata_key,
+                "extraction_confidence": result["confidence"],
+            }
+
+            logger.info(f"Invoking cv_parser for {correlation_id}")
+            lambda_client.invoke(
+                FunctionName=CV_PARSER_FUNCTION,
+                InvocationType="Event",  # Async invocation
+                Payload=json.dumps(parser_payload),
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to invoke cv_parser: {e}")
+            # Non-fatal: extraction succeeded, parsing can be retried
+
         return {
             "correlation_id": correlation_id,
-            "status": ProcessingStatus.COMPLETED,
+            "status": "extraction_complete",
             "method": result["method"],
             "confidence": result["confidence"],
             "text_length": len(result["text"]),
+            "parser_invoked": True,
         }
 
     except Exception as e:

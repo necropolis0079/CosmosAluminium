@@ -1,0 +1,8 @@
+# CV Parser Lambda dependencies
+# Note: Most dependencies come from Lambda layers
+# This file is for reference and local testing
+
+# No additional pip packages needed - all come from layers:
+# - lcmgo-cagenai-prod-lcmgo-package: source code
+# - lcmgo-cagenai-prod-pg8000: database driver
+# - lcmgo-cagenai-prod-opensearch: opensearch-py, requests-aws4auth

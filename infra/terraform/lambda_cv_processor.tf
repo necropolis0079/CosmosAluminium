@@ -61,6 +61,7 @@ resource "null_resource" "lcmgo_package_layer_build" {
     ocr_hash    = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/__init__.py")
     llm_hash    = filemd5("${path.module}/../../src/lcmgo_cagenai/llm/provider.py")
     search_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/search/__init__.py")
+    parser_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/__init__.py")
   }
 
   provisioner "local-exec" {
@@ -141,15 +142,16 @@ resource "aws_lambda_function" "cv_processor" {
 
   environment {
     variables = {
-      CV_UPLOADS_BUCKET = aws_s3_bucket.cv_uploads.bucket
-      PROCESSED_BUCKET  = aws_s3_bucket.processed_data.bucket
-      STATE_TABLE       = aws_dynamodb_table.cv_processing_state.name
-      DB_SECRET_ARN     = aws_secretsmanager_secret.db_credentials.arn
-      AWS_REGION_NAME   = var.aws_region
+      CV_UPLOADS_BUCKET  = aws_s3_bucket.cv_uploads.bucket
+      PROCESSED_BUCKET   = aws_s3_bucket.processed_data.bucket
+      STATE_TABLE        = aws_dynamodb_table.cv_processing_state.name
+      DB_SECRET_ARN      = aws_secretsmanager_secret.db_credentials.arn
+      CV_PARSER_FUNCTION = "lcmgo-cagenai-prod-cv-parser"
+      AWS_REGION_NAME    = var.aws_region
       # Tesseract OCR configuration
-      TESSDATA_PREFIX   = "/opt/tesseract/share/tessdata"
-      PATH              = "/opt/bin:/var/task:/var/lang/bin:/usr/local/bin:/usr/bin:/bin"
-      LD_LIBRARY_PATH   = "/opt/lib:/var/lang/lib:/lib64:/usr/lib64"
+      TESSDATA_PREFIX    = "/opt/tesseract/share/tessdata"
+      PATH               = "/opt/bin:/var/task:/var/lang/bin:/usr/local/bin:/usr/bin:/bin"
+      LD_LIBRARY_PATH    = "/opt/lib:/var/lang/lib:/lib64:/usr/lib64"
     }
   }
 

@@ -1,0 +1,621 @@
+"""
+Database Writer for storing parsed CV data in PostgreSQL.
+
+Writes parsed CV data to the PostgreSQL v4.0 schema, handling:
+- Candidate creation/update
+- Education, experience, skills, languages, certifications, licenses
+- GDPR consent records
+- Duplicate detection
+"""
+
+import json
+import logging
+from datetime import date, datetime, timezone
+from typing import Any
+from uuid import UUID
+
+import boto3
+import pg8000
+
+from .schema import ParsedCV
+from .taxonomy_mapper import normalize_text
+
+logger = logging.getLogger(__name__)
+
+
+class DatabaseWriter:
+    """
+    Writes parsed CV data to PostgreSQL database.
+
+    Handles transactional writes across multiple tables:
+    - candidates (main record)
+    - candidate_education
+    - candidate_experience
+    - candidate_skills
+    - candidate_languages
+    - candidate_certifications
+    - candidate_driving_licenses
+    - candidate_software
+    - consent_records
+
+    Example:
+        writer = DatabaseWriter(db_secret_arn="arn:aws:secretsmanager:...")
+        candidate_id = await writer.write_candidate(parsed_cv, correlation_id)
+    """
+
+    def __init__(
+        self,
+        db_secret_arn: str | None = None,
+        db_connection: Any | None = None,
+        region: str = "eu-north-1",
+    ):
+        """
+        Initialize database writer.
+
+        Args:
+            db_secret_arn: ARN of Secrets Manager secret with DB credentials
+            db_connection: Existing database connection (for reuse)
+            region: AWS region
+        """
+        self.db_secret_arn = db_secret_arn
+        self._connection = db_connection
+        self.region = region
+
+    def _get_connection(self) -> pg8000.Connection:
+        """Get database connection."""
+        if self._connection is not None:
+            return self._connection
+
+        if not self.db_secret_arn:
+            raise ValueError("db_secret_arn required when no connection provided")
+
+        # Get credentials from Secrets Manager
+        secrets_client = boto3.client("secretsmanager", region_name=self.region)
+        secret_response = secrets_client.get_secret_value(SecretId=self.db_secret_arn)
+        credentials = json.loads(secret_response["SecretString"])
+
+        self._connection = pg8000.connect(
+            host=credentials["host"],
+            port=int(credentials.get("port", 5432)),
+            database=credentials.get("dbname", "cagenai"),
+            user=credentials["username"],
+            password=credentials["password"],
+            ssl_context=True,
+        )
+
+        return self._connection
+
+    async def write_candidate(
+        self,
+        parsed_cv: ParsedCV,
+        correlation_id: str,
+        source_key: str | None = None,
+        check_duplicates: bool = True,
+    ) -> UUID:
+        """
+        Write parsed CV data to database.
+
+        Args:
+            parsed_cv: Parsed CV data
+            correlation_id: Processing correlation ID
+            source_key: S3 key of source file
+            check_duplicates: Whether to check for duplicate candidates
+
+        Returns:
+            UUID of created/updated candidate
+
+        Raises:
+            Exception: On database errors
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Start transaction
+            conn.begin()
+
+            # Check for duplicates
+            existing_id = None
+            if check_duplicates:
+                existing_id = self._find_duplicate(
+                    cursor,
+                    parsed_cv.personal.email,
+                    parsed_cv.personal.phone,
+                    parsed_cv.personal.first_name,
+                    parsed_cv.personal.last_name,
+                )
+
+            if existing_id:
+                logger.info(f"Found duplicate candidate: {existing_id}")
+                candidate_id = existing_id
+                self._update_candidate(cursor, candidate_id, parsed_cv)
+            else:
+                candidate_id = self._insert_candidate(cursor, parsed_cv, correlation_id, source_key)
+
+            # Insert related records
+            self._insert_education(cursor, candidate_id, parsed_cv.education)
+            self._insert_experience(cursor, candidate_id, parsed_cv.experience)
+            self._insert_skills(cursor, candidate_id, parsed_cv.skills)
+            self._insert_languages(cursor, candidate_id, parsed_cv.languages)
+            self._insert_certifications(cursor, candidate_id, parsed_cv.certifications)
+            self._insert_driving_licenses(cursor, candidate_id, parsed_cv.driving_licenses)
+            self._insert_software(cursor, candidate_id, parsed_cv.software)
+
+            # Insert GDPR consent record (basic processing consent)
+            self._insert_consent(cursor, candidate_id)
+
+            # Update parsed JSON
+            self._update_parsed_json(cursor, candidate_id, parsed_cv)
+
+            # Commit transaction
+            conn.commit()
+
+            logger.info(f"Successfully wrote candidate {candidate_id}")
+            return candidate_id
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to write candidate: {e}")
+            raise
+
+        finally:
+            cursor.close()
+
+    def _find_duplicate(
+        self,
+        cursor: Any,
+        email: str | None,
+        phone: str | None,
+        first_name: str,
+        last_name: str,
+    ) -> UUID | None:
+        """Find existing candidate by email, phone, or name."""
+        # Check email first (strongest match)
+        if email:
+            cursor.execute(
+                "SELECT id FROM candidates WHERE email = %s AND is_active = true",
+                (email,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return UUID(str(row[0]))
+
+        # Check phone
+        if phone:
+            cursor.execute(
+                "SELECT id FROM candidates WHERE phone = %s AND is_active = true",
+                (phone,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return UUID(str(row[0]))
+
+        # Check normalized name (fuzzy)
+        if first_name and last_name:
+            normalized_name = f"{normalize_text(first_name)} {normalize_text(last_name)}"
+            cursor.execute(
+                """
+                SELECT id FROM candidates
+                WHERE similarity(full_name_search, %s) > 0.8
+                AND is_active = true
+                ORDER BY similarity(full_name_search, %s) DESC
+                LIMIT 1
+                """,
+                (normalized_name, normalized_name),
+            )
+            row = cursor.fetchone()
+            if row:
+                return UUID(str(row[0]))
+
+        return None
+
+    def _insert_candidate(
+        self,
+        cursor: Any,
+        parsed_cv: ParsedCV,
+        correlation_id: str,
+        source_key: str | None,
+    ) -> UUID:
+        """Insert new candidate record."""
+        personal = parsed_cv.personal
+
+        cursor.execute(
+            """
+            INSERT INTO candidates (
+                first_name, last_name,
+                first_name_normalized, last_name_normalized,
+                email, email_secondary, phone, phone_secondary,
+                date_of_birth, gender, marital_status, nationality,
+                address_street, address_city, address_region, address_postal_code, address_country,
+                employment_status, availability_status, military_status,
+                willing_to_relocate, expected_salary_min, expected_salary_max, salary_currency,
+                cv_source, processing_status, quality_score, quality_level,
+                raw_cv_text, tags
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s
+            )
+            RETURNING id
+            """,
+            (
+                personal.first_name,
+                personal.last_name,
+                normalize_text(personal.first_name) if personal.first_name else None,
+                normalize_text(personal.last_name) if personal.last_name else None,
+                personal.email,
+                personal.email_secondary,
+                personal.phone,
+                personal.phone_secondary,
+                personal.date_of_birth,
+                personal.gender.value if personal.gender else "unknown",
+                personal.marital_status.value if personal.marital_status else "unknown",
+                personal.nationality,
+                personal.address_street,
+                personal.address_city,
+                personal.address_region,
+                personal.address_postal_code,
+                personal.address_country,
+                personal.employment_status.value if personal.employment_status else "unknown",
+                personal.availability_status.value if personal.availability_status else "unknown",
+                personal.military_status.value if personal.military_status else "unknown",
+                personal.willing_to_relocate,
+                personal.expected_salary_min,
+                personal.expected_salary_max,
+                personal.salary_currency,
+                "website",  # cv_source
+                "parsed",  # processing_status
+                parsed_cv.completeness_score,
+                self._get_quality_level(parsed_cv.completeness_score),
+                parsed_cv.raw_cv_text,
+                [f"correlation_id:{correlation_id}"],
+            ),
+        )
+
+        row = cursor.fetchone()
+        return UUID(str(row[0]))
+
+    def _update_candidate(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        parsed_cv: ParsedCV,
+    ) -> None:
+        """Update existing candidate record."""
+        personal = parsed_cv.personal
+
+        cursor.execute(
+            """
+            UPDATE candidates SET
+                first_name = COALESCE(%s, first_name),
+                last_name = COALESCE(%s, last_name),
+                email = COALESCE(%s, email),
+                phone = COALESCE(%s, phone),
+                address_city = COALESCE(%s, address_city),
+                address_region = COALESCE(%s, address_region),
+                processing_status = 'parsed',
+                quality_score = GREATEST(quality_score, %s),
+                updated_at = CURRENT_TIMESTAMP,
+                last_activity_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (
+                personal.first_name,
+                personal.last_name,
+                personal.email,
+                personal.phone,
+                personal.address_city,
+                personal.address_region,
+                parsed_cv.completeness_score,
+                str(candidate_id),
+            ),
+        )
+
+        # Delete existing related records before re-inserting
+        for table in [
+            "candidate_education",
+            "candidate_experience",
+            "candidate_skills",
+            "candidate_languages",
+            "candidate_certifications",
+            "candidate_driving_licenses",
+            "candidate_software",
+        ]:
+            cursor.execute(f"DELETE FROM {table} WHERE candidate_id = %s", (str(candidate_id),))
+
+    def _insert_education(self, cursor: Any, candidate_id: UUID, education: list) -> None:
+        """Insert education records."""
+        for edu in education:
+            cursor.execute(
+                """
+                INSERT INTO candidate_education (
+                    candidate_id, institution_name, institution_name_normalized,
+                    institution_city, institution_country,
+                    degree_level, degree_title, degree_title_normalized,
+                    field_of_study, field_of_study_detail, specialization,
+                    start_date, end_date, is_current, graduation_year,
+                    grade_value, grade_scale, thesis_title, honors,
+                    raw_text, confidence_score
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    str(candidate_id),
+                    edu.institution_name,
+                    normalize_text(edu.institution_name) if edu.institution_name else None,
+                    edu.institution_city,
+                    edu.institution_country,
+                    edu.degree_level.value if edu.degree_level else None,
+                    edu.degree_title,
+                    normalize_text(edu.degree_title) if edu.degree_title else None,
+                    edu.field_of_study.value if edu.field_of_study else None,
+                    edu.field_of_study_detail,
+                    edu.specialization,
+                    edu.start_date,
+                    edu.end_date,
+                    edu.is_current,
+                    edu.graduation_year,
+                    edu.grade_value,
+                    edu.grade_scale,
+                    edu.thesis_title,
+                    edu.honors,
+                    edu.raw_text,
+                    edu.confidence,
+                ),
+            )
+
+    def _insert_experience(self, cursor: Any, candidate_id: UUID, experience: list) -> None:
+        """Insert experience records."""
+        for exp in experience:
+            cursor.execute(
+                """
+                INSERT INTO candidate_experience (
+                    candidate_id, company_name, company_name_normalized,
+                    company_industry, company_city, company_country,
+                    job_title, job_title_normalized, role_id,
+                    department, employment_type,
+                    start_date, end_date, is_current,
+                    description, responsibilities, achievements, technologies_used,
+                    team_size, reports_to,
+                    raw_text, confidence_score
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    str(candidate_id),
+                    exp.company_name,
+                    normalize_text(exp.company_name) if exp.company_name else None,
+                    exp.company_industry,
+                    exp.company_city,
+                    exp.company_country,
+                    exp.job_title,
+                    normalize_text(exp.job_title) if exp.job_title else None,
+                    str(exp.role_id) if exp.role_id else None,
+                    exp.department,
+                    exp.employment_type.value if exp.employment_type else None,
+                    exp.start_date,
+                    exp.end_date,
+                    exp.is_current,
+                    exp.description,
+                    exp.responsibilities or [],
+                    exp.achievements or [],
+                    exp.technologies_used or [],
+                    exp.team_size,
+                    exp.reports_to,
+                    exp.raw_text,
+                    exp.confidence,
+                ),
+            )
+
+    def _insert_skills(self, cursor: Any, candidate_id: UUID, skills: list) -> None:
+        """Insert skill records."""
+        for skill in skills:
+            if not skill.skill_id:
+                # Skip skills without taxonomy mapping
+                # In production, might insert into a separate unmatched_skills table
+                continue
+
+            cursor.execute(
+                """
+                INSERT INTO candidate_skills (
+                    candidate_id, skill_id,
+                    skill_level, years_of_experience, last_used_year,
+                    source, source_context, confidence_score
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (candidate_id, skill_id) DO UPDATE SET
+                    skill_level = COALESCE(EXCLUDED.skill_level, candidate_skills.skill_level),
+                    years_of_experience = GREATEST(EXCLUDED.years_of_experience, candidate_skills.years_of_experience),
+                    confidence_score = GREATEST(EXCLUDED.confidence_score, candidate_skills.confidence_score),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    str(candidate_id),
+                    str(skill.skill_id),
+                    skill.level.value if skill.level else None,
+                    skill.years_of_experience,
+                    skill.last_used_year,
+                    "cv_parsed",
+                    skill.source_context,
+                    skill.confidence,
+                ),
+            )
+
+    def _insert_languages(self, cursor: Any, candidate_id: UUID, languages: list) -> None:
+        """Insert language records."""
+        for lang in languages:
+            cursor.execute(
+                """
+                INSERT INTO candidate_languages (
+                    candidate_id, language_code, language_name,
+                    proficiency_level, reading_level, writing_level, speaking_level, listening_level,
+                    certification_name, certification_score, certification_date, certification_expiry,
+                    is_native, is_verified
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (candidate_id, language_code) DO UPDATE SET
+                    proficiency_level = COALESCE(EXCLUDED.proficiency_level, candidate_languages.proficiency_level),
+                    certification_name = COALESCE(EXCLUDED.certification_name, candidate_languages.certification_name),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    str(candidate_id),
+                    lang.language_code,
+                    lang.language_name,
+                    lang.proficiency_level.value if lang.proficiency_level else "unknown",
+                    lang.reading_level.value if lang.reading_level else None,
+                    lang.writing_level.value if lang.writing_level else None,
+                    lang.speaking_level.value if lang.speaking_level else None,
+                    lang.listening_level.value if lang.listening_level else None,
+                    lang.certification_name,
+                    lang.certification_score,
+                    lang.certification_date,
+                    lang.certification_expiry,
+                    lang.is_native,
+                    False,  # is_verified
+                ),
+            )
+
+    def _insert_certifications(self, cursor: Any, candidate_id: UUID, certifications: list) -> None:
+        """Insert certification records."""
+        for cert in certifications:
+            cursor.execute(
+                """
+                INSERT INTO candidate_certifications (
+                    candidate_id, certification_name, certification_name_normalized,
+                    certification_id_taxonomy, issuing_organization, issuing_organization_normalized,
+                    credential_id, credential_url,
+                    issue_date, expiry_date,
+                    raw_text, confidence_score
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    str(candidate_id),
+                    cert.certification_name,
+                    normalize_text(cert.certification_name) if cert.certification_name else None,
+                    str(cert.certification_id) if cert.certification_id else None,
+                    cert.issuing_organization,
+                    normalize_text(cert.issuing_organization) if cert.issuing_organization else None,
+                    cert.credential_id,
+                    cert.credential_url,
+                    cert.issue_date,
+                    cert.expiry_date,
+                    cert.raw_text,
+                    cert.confidence,
+                ),
+            )
+
+    def _insert_driving_licenses(self, cursor: Any, candidate_id: UUID, licenses: list) -> None:
+        """Insert driving license records."""
+        for dl in licenses:
+            cursor.execute(
+                """
+                INSERT INTO candidate_driving_licenses (
+                    candidate_id, license_category,
+                    issue_date, expiry_date, issuing_country, license_number,
+                    is_verified
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (candidate_id, license_category) DO UPDATE SET
+                    issue_date = COALESCE(EXCLUDED.issue_date, candidate_driving_licenses.issue_date),
+                    expiry_date = COALESCE(EXCLUDED.expiry_date, candidate_driving_licenses.expiry_date)
+                """,
+                (
+                    str(candidate_id),
+                    dl.license_category.value,
+                    dl.issue_date,
+                    dl.expiry_date,
+                    dl.issuing_country,
+                    dl.license_number,
+                    False,  # is_verified
+                ),
+            )
+
+    def _insert_software(self, cursor: Any, candidate_id: UUID, software: list) -> None:
+        """Insert software records."""
+        for sw in software:
+            if not sw.software_id:
+                continue
+
+            cursor.execute(
+                """
+                INSERT INTO candidate_software (
+                    candidate_id, software_id,
+                    proficiency_level, version_used, years_of_experience, last_used_year,
+                    source, confidence_score
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (candidate_id, software_id) DO UPDATE SET
+                    proficiency_level = COALESCE(EXCLUDED.proficiency_level, candidate_software.proficiency_level),
+                    years_of_experience = GREATEST(EXCLUDED.years_of_experience, candidate_software.years_of_experience)
+                """,
+                (
+                    str(candidate_id),
+                    str(sw.software_id),
+                    sw.proficiency_level.value if sw.proficiency_level else None,
+                    sw.version_used,
+                    sw.years_of_experience,
+                    sw.last_used_year,
+                    "cv_parsed",
+                    sw.confidence,
+                ),
+            )
+
+    def _insert_consent(self, cursor: Any, candidate_id: UUID) -> None:
+        """Insert basic GDPR consent record."""
+        cursor.execute(
+            """
+            INSERT INTO consent_records (
+                candidate_id, consent_type, status,
+                consent_text, consent_version,
+                collection_method, granted_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                str(candidate_id),
+                "data_processing",
+                "granted",
+                "CV submitted for job application processing",
+                "1.0",
+                "cv_upload",
+                datetime.now(timezone.utc),
+            ),
+        )
+
+    def _update_parsed_json(self, cursor: Any, candidate_id: UUID, parsed_cv: ParsedCV) -> None:
+        """Update candidate with parsed JSON data."""
+        cursor.execute(
+            """
+            UPDATE candidates SET
+                parsed_cv_json = %s
+            WHERE id = %s
+            """,
+            (
+                json.dumps(parsed_cv.to_dict(), ensure_ascii=False),
+                str(candidate_id),
+            ),
+        )
+
+    @staticmethod
+    def _get_quality_level(score: float) -> str:
+        """Map quality score to quality level enum."""
+        if score >= 0.9:
+            return "excellent"
+        elif score >= 0.7:
+            return "good"
+        elif score >= 0.5:
+            return "fair"
+        elif score >= 0.3:
+            return "poor"
+        else:
+            return "insufficient"
+
+    def close(self) -> None:
+        """Close database connection."""
+        if self._connection:
+            try:
+                self._connection.close()
+            except Exception:
+                pass
+            self._connection = None
