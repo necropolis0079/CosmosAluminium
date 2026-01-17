@@ -15,15 +15,14 @@ terraform {
     }
   }
 
-  # Backend configuration for state management
-  # Uncomment and configure when ready for remote state
-  # backend "s3" {
-  #   bucket         = "lcmgo-cagenai-prod-tfstate-eun1"
-  #   key            = "terraform.tfstate"
-  #   region         = "eu-north-1"
-  #   encrypt        = true
-  #   dynamodb_table = "lcmgo-cagenai-prod-tfstate-lock"
-  # }
+  # Backend configuration for state management (S3 with native locking)
+  backend "s3" {
+    bucket       = "lcmgo-cagenai-prod-tfstate-eun1"
+    key          = "terraform.tfstate"
+    region       = "eu-north-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 # -----------------------------------------------------------------------------
