@@ -100,6 +100,14 @@ resource "aws_lambda_layer_version" "lcmgo_package" {
 }
 
 # -----------------------------------------------------------------------------
+# Tesseract OCR Lambda Layer (pre-built, deployed via AWS CLI)
+# -----------------------------------------------------------------------------
+
+data "aws_lambda_layer_version" "tesseract" {
+  layer_name = "lcmgo-cagenai-prod-tesseract-ocr"
+}
+
+# -----------------------------------------------------------------------------
 # Lambda Function
 # -----------------------------------------------------------------------------
 
@@ -122,6 +130,7 @@ resource "aws_lambda_function" "cv_processor" {
   layers = [
     aws_lambda_layer_version.cv_processor.arn,
     aws_lambda_layer_version.lcmgo_package.arn,
+    data.aws_lambda_layer_version.tesseract.arn,
   ]
 
   vpc_config {
@@ -136,6 +145,10 @@ resource "aws_lambda_function" "cv_processor" {
       STATE_TABLE       = aws_dynamodb_table.cv_processing_state.name
       DB_SECRET_ARN     = aws_secretsmanager_secret.db_credentials.arn
       AWS_REGION_NAME   = var.aws_region
+      # Tesseract OCR configuration
+      TESSDATA_PREFIX   = "/opt/tesseract/share/tessdata"
+      PATH              = "/opt/bin:/var/task:/var/lang/bin:/usr/local/bin:/usr/bin:/bin"
+      LD_LIBRARY_PATH   = "/opt/lib:/var/lang/lib:/lib64:/usr/lib64"
     }
   }
 
