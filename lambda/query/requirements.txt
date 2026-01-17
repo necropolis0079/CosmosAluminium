@@ -1,0 +1,6 @@
+# Query Lambda dependencies
+# Note: Most dependencies come from Lambda layers:
+# - lcmgo-cagenai-prod-lcmgo-package (query module)
+# - lcmgo-cagenai-prod-pg8000 (database driver)
+
+# No additional dependencies required - uses existing layers

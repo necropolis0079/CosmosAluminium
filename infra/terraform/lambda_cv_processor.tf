@@ -62,6 +62,7 @@ resource "null_resource" "lcmgo_package_layer_build" {
     llm_hash    = filemd5("${path.module}/../../src/lcmgo_cagenai/llm/provider.py")
     search_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/search/__init__.py")
     parser_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/__init__.py")
+    query_hash  = filemd5("${path.module}/../../src/lcmgo_cagenai/query/__init__.py")
   }
 
   provisioner "local-exec" {
