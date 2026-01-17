@@ -1,0 +1,58 @@
+# =============================================================================
+# LCMGoCloud-CAGenAI - Terraform Variables Example
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in the values.
+# NEVER commit terraform.tfvars to version control!
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Project Configuration (usually no changes needed)
+# -----------------------------------------------------------------------------
+
+# project_name       = "lcmgo-cagenai"
+# project_short_name = "lcmgo-cagenai"
+# environment        = "prod"
+# aws_region         = "eu-north-1"
+
+# -----------------------------------------------------------------------------
+# VPC Configuration (usually no changes needed)
+# -----------------------------------------------------------------------------
+
+# vpc_cidr              = "10.10.0.0/20"
+# enable_nat_gateway    = true
+# single_nat_gateway    = true  # Set to false for Multi-AZ NAT
+
+# -----------------------------------------------------------------------------
+# RDS Configuration
+# -----------------------------------------------------------------------------
+
+# db_instance_class    = "db.t3.small"
+# db_allocated_storage = 20
+# db_name              = "cagenai"
+# db_username          = "cagenai_admin"
+# db_multi_az          = false
+
+# REQUIRED: Set this in your terraform.tfvars
+db_password = "CHANGE_ME_TO_SECURE_PASSWORD"
+
+# -----------------------------------------------------------------------------
+# OpenSearch Configuration
+# -----------------------------------------------------------------------------
+
+# opensearch_instance_type  = "t3.medium.search"
+# opensearch_instance_count = 1
+# opensearch_volume_size    = 20
+
+# -----------------------------------------------------------------------------
+# Lambda Configuration
+# -----------------------------------------------------------------------------
+
+# lambda_memory_size = 512
+# lambda_timeout     = 30
+# lambda_runtime     = "python3.11"
+
+# -----------------------------------------------------------------------------
+# S3 Configuration
+# -----------------------------------------------------------------------------
+
+# s3_force_destroy = false  # Set to true only for development/testing
