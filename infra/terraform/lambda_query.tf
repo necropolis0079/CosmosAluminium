@@ -148,7 +148,7 @@ resource "aws_lambda_function_url" "query" {
   cors {
     allow_credentials = true
     allow_headers     = ["content-type", "authorization"]
-    allow_methods     = ["POST", "OPTIONS"]
+    allow_methods     = ["*"]
     allow_origins     = ["*"]  # Restrict in production
     max_age           = 86400
   }
