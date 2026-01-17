@@ -67,6 +67,14 @@ resource "aws_opensearch_domain" "main" {
         }
         Action   = "es:*"
         Resource = "arn:aws:es:${var.aws_region}:${data.aws_caller_identity.current.account_id}:domain/${local.name_prefix}-search/*"
+      },
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.bastion.arn
+        }
+        Action   = "es:*"
+        Resource = "arn:aws:es:${var.aws_region}:${data.aws_caller_identity.current.account_id}:domain/${local.name_prefix}-search/*"
       }
     ]
   })

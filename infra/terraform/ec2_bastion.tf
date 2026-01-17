@@ -162,6 +162,52 @@ resource "aws_iam_role_policy_attachment" "bastion_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# Policy for Secrets Manager access (DB credentials)
+resource "aws_iam_role_policy" "bastion_secrets" {
+  name = "${local.name_prefix}-bastion-secrets-policy"
+  role = aws_iam_role.bastion.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [
+          "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name_prefix}-db-credentials*"
+        ]
+      }
+    ]
+  })
+}
+
+# Policy for OpenSearch access (cleanup and debugging)
+resource "aws_iam_role_policy" "bastion_opensearch" {
+  name = "${local.name_prefix}-bastion-opensearch-policy"
+  role = aws_iam_role.bastion.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "es:ESHttpGet",
+          "es:ESHttpPost",
+          "es:ESHttpPut",
+          "es:ESHttpDelete",
+          "es:ESHttpHead"
+        ]
+        Resource = [
+          "arn:aws:es:${var.aws_region}:${data.aws_caller_identity.current.account_id}:domain/${local.name_prefix}-search/*"
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "bastion" {
   name = "${local.name_prefix}-bastion-profile"
   role = aws_iam_role.bastion.name
