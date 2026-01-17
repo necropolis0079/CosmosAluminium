@@ -362,32 +362,35 @@ def update_state(
     """
     table = dynamodb.Table(STATE_TABLE)
 
-    item = {
-        "correlation_id": correlation_id,
-        "status": status,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Use update_item for atomic updates with upsert behavior
+    # DynamoDB table uses cv_id as hash key - we use correlation_id as cv_id
+    update_expr = "SET #status = :status, #updated_at = :updated_at, #correlation_id = :correlation_id"
+    expr_names = {
+        "#status": "status",
+        "#updated_at": "updated_at",
+        "#correlation_id": "correlation_id",
     }
-
-    if extra_data:
-        item.update(extra_data)
-
-    # Use update_item for atomic updates
-    update_expr = "SET #status = :status, updated_at = :updated_at"
-    expr_names = {"#status": "status"}
     expr_values = {
         ":status": status,
-        ":updated_at": item["updated_at"],
+        ":updated_at": now,
+        ":correlation_id": correlation_id,
     }
 
+    # Add extra data with proper attribute name escaping for reserved keywords
     if extra_data:
         for key, value in extra_data.items():
-            if key not in ("correlation_id", "status", "updated_at"):
-                update_expr += f", {key} = :{key}"
+            if key not in ("cv_id", "correlation_id", "status", "updated_at"):
+                # Use expression attribute names to avoid reserved keyword issues
+                attr_name = f"#attr_{key}"
+                expr_names[attr_name] = key
+                update_expr += f", {attr_name} = :{key}"
                 expr_values[f":{key}"] = value
 
     try:
         table.update_item(
-            Key={"correlation_id": correlation_id},
+            Key={"cv_id": correlation_id},  # Use correlation_id as cv_id
             UpdateExpression=update_expr,
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_values,

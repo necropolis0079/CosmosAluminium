@@ -1,15 +1,12 @@
 # CV Processor Lambda dependencies
-# Core extraction
+# Core extraction (no cryptography dependencies)
 python-docx>=0.8.11
 pdfplumber>=0.10.3
+Pillow>=10.0.0
 
 # OCR (for triple OCR fallback - Tesseract requires system install)
-pytesseract>=0.3.10
-pdf2image>=1.16.3
-Pillow>=10.0.0
+# Note: pytesseract and pdf2image removed - using Tesseract layer directly
+# Note: cohere removed - embeddings handled by cv_parser Lambda
 
 # AWS SDK (provided by Lambda runtime, but pinned for local dev)
 boto3>=1.34.0
-
-# Cohere embed client
-cohere>=5.0.0

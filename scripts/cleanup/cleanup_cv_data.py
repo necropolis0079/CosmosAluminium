@@ -458,17 +458,38 @@ class CVDataCleaner:
             result.errors.append(f"S3 processed cleanup error: {e}")
 
     def _clean_dynamodb(self, correlation_id: str, result: CleanupResult):
-        """Clean DynamoDB state entry."""
+        """Clean DynamoDB state entry.
+
+        Note: Table uses cv_id as primary key, correlation_id is a GSI.
+        Must query GSI first to get cv_id, then delete by cv_id.
+        """
         try:
             table = self.dynamodb.Table(STATE_TABLE)
 
-            if self.dry_run:
-                logger.info(f"[DRY RUN] Would delete DynamoDB item: {correlation_id}")
-            else:
-                table.delete_item(Key={"correlation_id": correlation_id})
-                logger.info(f"Deleted DynamoDB item: {correlation_id}")
+            # Query GSI to get cv_id from correlation_id
+            response = table.query(
+                IndexName="correlation_id-index",
+                KeyConditionExpression="correlation_id = :cid",
+                ExpressionAttributeValues={":cid": correlation_id},
+            )
 
-            result.dynamodb_deleted.append(correlation_id)
+            items = response.get("Items", [])
+            if not items:
+                logger.info(f"No DynamoDB item found for correlation_id: {correlation_id}")
+                return
+
+            for item in items:
+                cv_id = item.get("cv_id")
+                if not cv_id:
+                    continue
+
+                if self.dry_run:
+                    logger.info(f"[DRY RUN] Would delete DynamoDB item: {correlation_id} (cv_id: {cv_id})")
+                else:
+                    table.delete_item(Key={"cv_id": cv_id})
+                    logger.info(f"Deleted DynamoDB item: {correlation_id} (cv_id: {cv_id})")
+
+                result.dynamodb_deleted.append(correlation_id)
 
         except Exception as e:
             result.errors.append(f"DynamoDB error for {correlation_id}: {e}")
