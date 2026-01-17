@@ -85,9 +85,15 @@ Thumbs.db
 *.docx
 cv_samples/
 
-# Lambda artifacts
+# Lambda artifacts (built in CI, not committed)
 lambda/**/layer/
 lambda/**/package_layer/
+lambda/**/*_layer/
 lambda/**/*.zip
+# Exception: pre-built Tesseract layer IS committed (11.2MB with Greek/English/German)
+!lambda/layers/tesseract/tesseract-layer.zip
+
+# Misc
 response.json
 tfplan
+coverage.xml

@@ -1,0 +1,169 @@
+# =============================================================================
+# LCMGoCloud-CAGenAI GitLab CI/CD Pipeline
+# =============================================================================
+# Pipeline: validate → test → plan → deploy (manual)
+# - Feature branches: validate, test, plan
+# - Main branch: all stages, deploy requires manual approval
+# =============================================================================
+
+stages:
+  - validate
+  - test
+  - plan
+  - deploy
+
+variables:
+  TF_ROOT: "infra/terraform"
+  PYTHON_VERSION: "3.11"
+  AWS_DEFAULT_REGION: "eu-north-1"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+# -----------------------------------------------------------------------------
+# Default Settings
+# -----------------------------------------------------------------------------
+
+default:
+  image: python:3.11-slim
+
+# -----------------------------------------------------------------------------
+# Cache Configuration
+# -----------------------------------------------------------------------------
+
+.pip-cache: &pip-cache
+  cache:
+    key: pip-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .cache/pip
+    policy: pull-push
+
+# -----------------------------------------------------------------------------
+# Stage: Validate
+# -----------------------------------------------------------------------------
+
+lint:
+  stage: validate
+  <<: *pip-cache
+  before_script:
+    - pip install --upgrade pip
+  script:
+    - pip install ruff black mypy boto3-stubs types-requests
+    - ruff check src/ lambda/
+    - black --check src/ lambda/
+    - mypy src/ --ignore-missing-imports
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+terraform-validate:
+  stage: validate
+  image:
+    name: hashicorp/terraform:1.6
+    entrypoint: [""]
+  script:
+    - cd $TF_ROOT
+    - terraform init -backend=false
+    - terraform fmt -check -recursive
+    - terraform validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# -----------------------------------------------------------------------------
+# Stage: Test
+# -----------------------------------------------------------------------------
+
+test:
+  stage: test
+  <<: *pip-cache
+  before_script:
+    - pip install --upgrade pip
+  script:
+    - pip install -e ".[dev]"
+    - pip install pytest pytest-cov moto boto3
+    - pytest tests/ -v --cov=src/lcmgo_cagenai --cov-report=xml --cov-report=term
+  coverage: '/TOTAL.*\s+(\d+%)/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# -----------------------------------------------------------------------------
+# Stage: Plan
+# -----------------------------------------------------------------------------
+
+build-layers:
+  stage: plan
+  image: python:3.11-slim
+  before_script:
+    - apt-get update && apt-get install -y zip
+  script:
+    - chmod +x scripts/ci/build-layers.sh
+    - ./scripts/ci/build-layers.sh
+  artifacts:
+    paths:
+      - lambda/cv_processor/cv_processor_layer.zip
+      - lambda/cv_processor/lcmgo_package_layer.zip
+      - lambda/db_init/pg8000_layer.zip
+      - lambda/opensearch_init/opensearch_layer.zip
+    expire_in: 1 day
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+terraform-plan:
+  stage: plan
+  image:
+    name: hashicorp/terraform:1.6
+    entrypoint: [""]
+  needs:
+    - build-layers
+  script:
+    - cd $TF_ROOT
+    - terraform init
+    - terraform plan -out=tfplan -input=false
+  artifacts:
+    paths:
+      - $TF_ROOT/tfplan
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# -----------------------------------------------------------------------------
+# Stage: Deploy (Manual, Main Branch Only)
+# -----------------------------------------------------------------------------
+
+terraform-apply:
+  stage: deploy
+  image:
+    name: hashicorp/terraform:1.6
+    entrypoint: [""]
+  needs:
+    - terraform-plan
+    - build-layers
+  script:
+    - cd $TF_ROOT
+    - terraform init
+    - terraform apply -auto-approve tfplan
+  environment:
+    name: production
+    url: https://iw9oxe3w4b.execute-api.eu-north-1.amazonaws.com/v1
+  when: manual
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+verify-deployment:
+  stage: deploy
+  image: curlimages/curl:latest
+  needs:
+    - terraform-apply
+  script:
+    - curl -f https://iw9oxe3w4b.execute-api.eu-north-1.amazonaws.com/v1/health
+    - echo "Health check passed!"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
