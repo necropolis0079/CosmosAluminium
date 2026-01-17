@@ -201,3 +201,90 @@ output "cognito_user_groups" {
     hr_users    = aws_cognito_user_group.hr_users.name
   }
 }
+
+# -----------------------------------------------------------------------------
+# RDS Outputs
+# -----------------------------------------------------------------------------
+
+output "rds_endpoint" {
+  description = "RDS PostgreSQL endpoint"
+  value       = aws_db_instance.main.endpoint
+}
+
+output "rds_address" {
+  description = "RDS PostgreSQL address (hostname only)"
+  value       = aws_db_instance.main.address
+}
+
+output "rds_port" {
+  description = "RDS PostgreSQL port"
+  value       = aws_db_instance.main.port
+}
+
+output "rds_database_name" {
+  description = "RDS database name"
+  value       = aws_db_instance.main.db_name
+}
+
+output "rds_identifier" {
+  description = "RDS instance identifier"
+  value       = aws_db_instance.main.identifier
+}
+
+output "rds_credentials_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing DB credentials"
+  value       = aws_secretsmanager_secret.db_credentials.arn
+}
+
+# -----------------------------------------------------------------------------
+# OpenSearch Outputs
+# -----------------------------------------------------------------------------
+
+output "opensearch_endpoint" {
+  description = "OpenSearch domain endpoint"
+  value       = aws_opensearch_domain.main.endpoint
+}
+
+output "opensearch_domain_name" {
+  description = "OpenSearch domain name"
+  value       = aws_opensearch_domain.main.domain_name
+}
+
+output "opensearch_domain_arn" {
+  description = "OpenSearch domain ARN"
+  value       = aws_opensearch_domain.main.arn
+}
+
+output "opensearch_kibana_endpoint" {
+  description = "OpenSearch Dashboards endpoint"
+  value       = aws_opensearch_domain.main.dashboard_endpoint
+}
+
+# -----------------------------------------------------------------------------
+# DynamoDB Outputs
+# -----------------------------------------------------------------------------
+
+output "dynamodb_cv_processing_state_table" {
+  description = "DynamoDB CV processing state table name"
+  value       = aws_dynamodb_table.cv_processing_state.name
+}
+
+output "dynamodb_cv_processing_state_arn" {
+  description = "DynamoDB CV processing state table ARN"
+  value       = aws_dynamodb_table.cv_processing_state.arn
+}
+
+output "dynamodb_query_cache_table" {
+  description = "DynamoDB query cache table name"
+  value       = aws_dynamodb_table.query_cache.name
+}
+
+output "dynamodb_user_sessions_table" {
+  description = "DynamoDB user sessions table name"
+  value       = aws_dynamodb_table.user_sessions.name
+}
+
+output "dynamodb_prompt_versions_table" {
+  description = "DynamoDB prompt versions table name"
+  value       = aws_dynamodb_table.prompt_versions.name
+}

@@ -105,8 +105,9 @@ variable "db_username" {
 }
 
 variable "db_password" {
-  description = "PostgreSQL master password"
+  description = "PostgreSQL master password (leave empty to auto-generate)"
   type        = string
+  default     = ""
   sensitive   = true
 }
 
