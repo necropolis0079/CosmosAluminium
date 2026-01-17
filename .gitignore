@@ -84,3 +84,9 @@ Thumbs.db
 *.pdf
 *.docx
 cv_samples/
+
+# Lambda artifacts
+lambda/**/layer/
+lambda/**/*.zip
+response.json
+tfplan
