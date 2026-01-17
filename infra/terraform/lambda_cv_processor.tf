@@ -58,8 +58,9 @@ resource "aws_lambda_layer_version" "cv_processor" {
 
 resource "null_resource" "lcmgo_package_layer_build" {
   triggers = {
-    ocr_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/__init__.py")
-    llm_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/llm/provider.py")
+    ocr_hash    = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/__init__.py")
+    llm_hash    = filemd5("${path.module}/../../src/lcmgo_cagenai/llm/provider.py")
+    search_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/search/__init__.py")
   }
 
   provisioner "local-exec" {
