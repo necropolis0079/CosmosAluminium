@@ -255,9 +255,7 @@ class TripleOCRExtractor:
 
             # Handle PDFs vs images
             if file_path.suffix.lower() == ".pdf":
-                from pdf2image import convert_from_path
-
-                images = convert_from_path(file_path)
+                images = self._pdf_to_images(file_path)
             else:
                 images = [Image.open(file_path)]
 
@@ -551,9 +549,7 @@ Produce the most accurate final text. Return ONLY the corrected text, no explana
 
         # Handle PDFs
         if file_path.suffix.lower() == ".pdf":
-            from pdf2image import convert_from_path
-
-            images = convert_from_path(file_path, first_page=1, last_page=1)
+            images = self._pdf_to_images(file_path, first_page_only=True)
             if not images:
                 raise ValueError("Could not convert PDF to image")
             image = images[0]
@@ -579,3 +575,37 @@ Produce the most accurate final text. Return ONLY the corrected text, no explana
         image_data = base64.standard_b64encode(buffer.read()).decode("utf-8")
 
         return image_data, media_type
+
+    def _pdf_to_images(
+        self, file_path: Path, first_page_only: bool = False
+    ) -> list:
+        """
+        Convert PDF pages to PIL Images using pypdfium2.
+
+        Uses pypdfium2 instead of pdf2image/poppler for better portability.
+        pypdfium2 is a self-contained library with no external dependencies.
+
+        Args:
+            file_path: Path to PDF file
+            first_page_only: If True, only convert first page
+
+        Returns:
+            List of PIL Image objects
+        """
+        import pypdfium2 as pdfium
+        from PIL import Image
+
+        images = []
+        pdf = pdfium.PdfDocument(file_path)
+
+        page_count = len(pdf)
+        pages_to_process = 1 if first_page_only else page_count
+
+        for i in range(pages_to_process):
+            page = pdf[i]
+            # Render at 2x scale (144 DPI) for better OCR accuracy
+            bitmap = page.render(scale=2)
+            pil_image = bitmap.to_pil()
+            images.append(pil_image)
+
+        return images
