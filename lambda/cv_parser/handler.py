@@ -195,14 +195,15 @@ async def process_cv(
     # 6. Update state: STORING
     update_state(correlation_id, ProcessingStatus.STORING)
 
-    # 7. Write to PostgreSQL with verification (Task 1.2)
+    # 7. Write to PostgreSQL with verification (Task 1.2) and completeness audit (Task 1.3)
     candidate_id = None
     write_verification = None
+    completeness_audit = None
     if DB_SECRET_ARN:
         try:
             logger.info("Writing to PostgreSQL")
             writer = DatabaseWriter(db_secret_arn=DB_SECRET_ARN, region=AWS_REGION)
-            candidate_id, write_verification = await writer.write_candidate(
+            candidate_id, write_verification, completeness_audit = await writer.write_candidate(
                 parsed_cv,
                 correlation_id,
                 source_key=metadata.get("source_key"),
@@ -210,12 +211,20 @@ async def process_cv(
             )
             writer.close()
 
-            # Log verification results
+            # Log verification results (Task 1.2)
             if write_verification:
                 logger.info(
                     f"Database write verification: success={write_verification.success}, "
                     f"coverage={write_verification.coverage_score:.2%}, "
                     f"unmatched={write_verification.total_unmatched}"
+                )
+
+            # Log completeness audit results (Task 1.3)
+            if completeness_audit:
+                logger.info(
+                    f"CV Completeness Audit: score={completeness_audit.completeness_score:.2%}, "
+                    f"quality={completeness_audit.quality_level}, "
+                    f"taxonomy_coverage={completeness_audit.taxonomy_coverage:.2%}"
                 )
 
             logger.info(f"Created/updated candidate: {candidate_id}")
@@ -224,13 +233,16 @@ async def process_cv(
             logger.error(f"Database write failed: {e}")
             # Continue to try indexing anyway
 
-    # 8. Update state: INDEXING (include verification info)
+    # 8. Update state: INDEXING (include verification and audit info)
     indexing_data = {
         "candidate_id": str(candidate_id) if candidate_id else None,
     }
     if write_verification:
         indexing_data["verification_success"] = write_verification.success
         indexing_data["verification_coverage"] = write_verification.coverage_score
+    if completeness_audit:
+        indexing_data["completeness_score"] = completeness_audit.completeness_score
+        indexing_data["quality_level"] = completeness_audit.quality_level
 
     update_state(correlation_id, ProcessingStatus.INDEXING, indexing_data)
 
@@ -262,7 +274,7 @@ async def process_cv(
         },
     )
 
-    # 11. Update state: COMPLETED (include verification in final state)
+    # 11. Update state: COMPLETED (include verification and audit in final state)
     completed_data = {
         "candidate_id": str(candidate_id) if candidate_id else None,
         "parsed_key": parsed_key,
@@ -273,7 +285,7 @@ async def process_cv(
         "education_count": len(parsed_cv.education),
     }
 
-    # Add verification results to final state
+    # Add verification results to final state (Task 1.2)
     if write_verification:
         completed_data["verification_success"] = write_verification.success
         completed_data["verification_coverage"] = write_verification.coverage_score
@@ -283,9 +295,19 @@ async def process_cv(
         if write_verification.warnings:
             completed_data["verification_warnings"] = len(write_verification.warnings)
 
+    # Add completeness audit results to final state (Task 1.3)
+    if completeness_audit:
+        completed_data["audit_completeness_score"] = completeness_audit.completeness_score
+        completed_data["audit_quality_level"] = completeness_audit.quality_level
+        completed_data["audit_taxonomy_coverage"] = completeness_audit.taxonomy_coverage
+        if completeness_audit.missing_critical:
+            completed_data["audit_missing_critical"] = completeness_audit.missing_critical
+        if completeness_audit.data_quality_issues:
+            completed_data["audit_quality_issues"] = completeness_audit.data_quality_issues
+
     update_state(correlation_id, ProcessingStatus.COMPLETED, completed_data)
 
-    # Build response with verification summary
+    # Build response with verification and audit summary
     response = {
         "statusCode": 200,
         "correlation_id": correlation_id,
@@ -303,7 +325,7 @@ async def process_cv(
         },
     }
 
-    # Add verification to response
+    # Add verification to response (Task 1.2)
     if write_verification:
         response["verification"] = {
             "success": write_verification.success,
@@ -311,6 +333,30 @@ async def process_cv(
             "unmatched": write_verification.total_unmatched,
             "errors": len(write_verification.errors),
             "warnings": len(write_verification.warnings),
+        }
+
+    # Add completeness audit to response (Task 1.3)
+    if completeness_audit:
+        response["audit"] = {
+            "completeness_score": completeness_audit.completeness_score,
+            "quality_level": completeness_audit.quality_level,
+            "taxonomy_coverage": completeness_audit.taxonomy_coverage,
+            "missing_critical": completeness_audit.missing_critical,
+            "missing_optional": completeness_audit.missing_optional,
+            "data_quality_issues": completeness_audit.data_quality_issues,
+            "sections": {
+                "education": completeness_audit.education_count,
+                "experience": completeness_audit.experience_count,
+                "skills": {
+                    "total": completeness_audit.skills_count,
+                    "matched": completeness_audit.skills_matched_count,
+                },
+                "languages": completeness_audit.languages_count,
+                "certifications": {
+                    "total": completeness_audit.certifications_count,
+                    "matched": completeness_audit.certifications_matched_count,
+                },
+            },
         }
 
     return response

@@ -19,7 +19,7 @@ from uuid import UUID
 import boto3
 import pg8000
 
-from .schema import ParsedCV
+from .schema import CVCompletenessAudit, ParsedCV
 from .taxonomy_mapper import normalize_text
 
 logger = logging.getLogger(__name__)
@@ -205,9 +205,9 @@ class DatabaseWriter:
         source_key: str | None = None,
         check_duplicates: bool = True,
         verify_write: bool = True,
-    ) -> tuple[UUID, WriteVerification | None]:
+    ) -> tuple[UUID, WriteVerification | None, CVCompletenessAudit | None]:
         """
-        Write parsed CV data to database with post-write verification.
+        Write parsed CV data to database with post-write verification and completeness audit.
 
         Args:
             parsed_cv: Parsed CV data
@@ -217,7 +217,7 @@ class DatabaseWriter:
             verify_write: Whether to verify records after write (Task 1.2)
 
         Returns:
-            Tuple of (candidate_id, WriteVerification result or None)
+            Tuple of (candidate_id, WriteVerification result or None, CVCompletenessAudit or None)
 
         Raises:
             Exception: On database errors
@@ -225,6 +225,7 @@ class DatabaseWriter:
         conn = self._get_connection()
         cursor = conn.cursor()
         verification = None
+        completeness_audit = None
 
         try:
             # pg8000 uses autocommit=False by default, so transactions are implicit
@@ -300,10 +301,28 @@ class DatabaseWriter:
                         f"coverage={verification.coverage_score:.2%}"
                     )
 
-                # Store verification result in DynamoDB
-                self._store_verification(candidate_id, verification, correlation_id)
+            # CV Completeness Audit (Task 1.3)
+            completeness_audit = CVCompletenessAudit.from_parsed_cv(
+                parsed_cv,
+                skills_matched=skill_stats.get("inserted", 0),
+                certs_matched=cert_stats.get("inserted", 0) - cert_stats.get("unmatched", 0),
+                software_matched=software_stats.get("inserted", 0),
+            )
 
-            return candidate_id, verification
+            logger.info(
+                f"CV Completeness Audit for {candidate_id}: "
+                f"score={completeness_audit.completeness_score:.2%}, "
+                f"level={completeness_audit.quality_level}, "
+                f"taxonomy_coverage={completeness_audit.taxonomy_coverage:.2%}"
+            )
+
+            # Store verification and audit in DynamoDB
+            if verify_write or completeness_audit:
+                self._store_verification_and_audit(
+                    candidate_id, verification, completeness_audit, correlation_id
+                )
+
+            return candidate_id, verification, completeness_audit
 
         except Exception as e:
             conn.rollback()
@@ -1092,21 +1111,26 @@ class DatabaseWriter:
 
         return verification
 
-    def _store_verification(
+    def _store_verification_and_audit(
         self,
         candidate_id: UUID,
-        verification: WriteVerification,
+        verification: WriteVerification | None,
+        completeness_audit: CVCompletenessAudit | None,
         correlation_id: str,
     ) -> None:
         """
-        Store verification result in DynamoDB for tracking.
+        Store verification and completeness audit results in DynamoDB for tracking.
 
-        Updates the cv-processing-state table with verification data,
-        enabling monitoring and debugging of data integrity.
+        Updates the cv-processing-state table with verification and audit data,
+        enabling monitoring and debugging of data integrity and quality.
+
+        Task 1.2: Write Verification storage
+        Task 1.3: Completeness Audit storage
 
         Args:
             candidate_id: Candidate UUID
-            verification: WriteVerification result
+            verification: WriteVerification result (may be None)
+            completeness_audit: CVCompletenessAudit result (may be None)
             correlation_id: Processing correlation ID
         """
         from decimal import Decimal
@@ -1125,39 +1149,62 @@ class DatabaseWriter:
             dynamodb = boto3.resource("dynamodb", region_name=self.region)
             table = dynamodb.Table("lcmgo-cagenai-prod-cv-processing-state")
 
-            # Determine status based on verification result
-            if verification.success and not verification.warnings:
-                status = "completed"
-            elif verification.success:
-                status = "completed_with_warnings"
+            # Determine status based on verification and audit results
+            if verification:
+                if verification.success and not verification.warnings:
+                    status = "completed"
+                elif verification.success:
+                    status = "completed_with_warnings"
+                else:
+                    status = "completed_with_errors"
             else:
-                status = "completed_with_errors"
+                status = "completed"
 
-            # Convert verification dict to DynamoDB-compatible format
-            verification_data = convert_floats(verification.to_dict())
+            # Build update expression and attribute values
+            update_expr_parts = [
+                "#s = :status",
+                "candidate_id = :cid",
+                "audit_time = :t",
+            ]
+            expr_attr_values = {
+                ":status": status,
+                ":cid": str(candidate_id),
+                ":t": datetime.now(timezone.utc).isoformat(),
+            }
+
+            # Add verification data if available
+            if verification:
+                verification_data = convert_floats(verification.to_dict())
+                update_expr_parts.append("write_verification = :v")
+                expr_attr_values[":v"] = verification_data
+
+            # Add completeness audit data if available (Task 1.3)
+            if completeness_audit:
+                audit_data = convert_floats(completeness_audit.to_dict())
+                update_expr_parts.append("completeness_audit = :audit")
+                update_expr_parts.append("completeness_score = :cscore")
+                update_expr_parts.append("quality_level = :qlevel")
+                update_expr_parts.append("taxonomy_coverage = :tcov")
+                expr_attr_values[":audit"] = audit_data
+                expr_attr_values[":cscore"] = Decimal(str(round(completeness_audit.completeness_score, 4)))
+                expr_attr_values[":qlevel"] = completeness_audit.quality_level
+                expr_attr_values[":tcov"] = Decimal(str(round(completeness_audit.taxonomy_coverage, 4)))
 
             table.update_item(
                 Key={"cv_id": correlation_id},
-                UpdateExpression="""
-                    SET write_verification = :v,
-                        verification_time = :t,
-                        #s = :status,
-                        candidate_id = :cid
-                """,
+                UpdateExpression="SET " + ", ".join(update_expr_parts),
                 ExpressionAttributeNames={"#s": "status"},
-                ExpressionAttributeValues={
-                    ":v": verification_data,
-                    ":t": datetime.now(timezone.utc).isoformat(),
-                    ":status": status,
-                    ":cid": str(candidate_id),
-                },
+                ExpressionAttributeValues=expr_attr_values,
             )
 
-            logger.debug(f"Stored verification for {correlation_id}: {status}")
+            logger.debug(
+                f"Stored verification and audit for {correlation_id}: "
+                f"status={status}, quality={completeness_audit.quality_level if completeness_audit else 'N/A'}"
+            )
 
         except Exception as e:
             # Don't fail the whole operation if DynamoDB update fails
-            logger.warning(f"Failed to store verification in DynamoDB: {e}")
+            logger.warning(f"Failed to store verification/audit in DynamoDB: {e}")
 
     @staticmethod
     def _get_quality_level(score: float) -> str:

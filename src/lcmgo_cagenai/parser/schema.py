@@ -778,3 +778,291 @@ def get_language_code(language_name: str) -> str:
     """
     name_lower = language_name.lower().strip()
     return LANGUAGE_CODES.get(name_lower, name_lower[:2])
+
+
+@dataclass
+class CVCompletenessAudit:
+    """
+    Detailed completeness audit for a parsed CV.
+
+    Task 1.3: CV Completeness Audit
+    Provides comprehensive metrics for each processed CV section,
+    enabling quality assessment and data completeness tracking.
+    """
+
+    # Section presence
+    has_personal: bool = False
+    has_education: bool = False
+    has_experience: bool = False
+    has_skills: bool = False
+    has_languages: bool = False
+    has_certifications: bool = False
+    has_driving_licenses: bool = False
+    has_software: bool = False
+
+    # Personal info completeness
+    has_name: bool = False
+    has_email: bool = False
+    has_phone: bool = False
+    has_location: bool = False
+    has_dob: bool = False
+
+    # Section counts
+    education_count: int = 0
+    experience_count: int = 0
+    skills_count: int = 0
+    skills_matched_count: int = 0
+    languages_count: int = 0
+    certifications_count: int = 0
+    certifications_matched_count: int = 0
+    driving_licenses_count: int = 0
+    software_count: int = 0
+    software_matched_count: int = 0
+
+    # Quality indicators
+    avg_section_confidence: float = 0.0
+    lowest_confidence_section: str | None = None
+    lowest_confidence_value: float = 1.0
+
+    # Warnings and issues
+    missing_critical: list[str] = field(default_factory=list)
+    missing_optional: list[str] = field(default_factory=list)
+    data_quality_issues: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.missing_critical is None:
+            self.missing_critical = []
+        if self.missing_optional is None:
+            self.missing_optional = []
+        if self.data_quality_issues is None:
+            self.data_quality_issues = []
+
+    @property
+    def completeness_score(self) -> float:
+        """Calculate overall completeness score (0-1)."""
+        critical_fields = [
+            self.has_name,
+            self.has_email or self.has_phone,  # At least one contact
+            self.has_education or self.has_experience,  # At least one history
+        ]
+
+        optional_fields = [
+            self.has_skills,
+            self.has_languages,
+            self.has_location,
+            self.has_certifications,
+            self.has_software,
+        ]
+
+        critical_score = sum(1 for f in critical_fields if f) / len(critical_fields)
+        optional_score = sum(1 for f in optional_fields if f) / len(optional_fields)
+
+        # Critical fields worth 70%, optional 30%
+        return (critical_score * 0.7) + (optional_score * 0.3)
+
+    @property
+    def quality_level(self) -> str:
+        """Determine quality level based on completeness."""
+        score = self.completeness_score
+        if score >= 0.9:
+            return "excellent"
+        elif score >= 0.7:
+            return "good"
+        elif score >= 0.5:
+            return "fair"
+        elif score >= 0.3:
+            return "poor"
+        return "insufficient"
+
+    @property
+    def taxonomy_coverage(self) -> float:
+        """Calculate taxonomy coverage for matchable items."""
+        total_items = self.skills_count + self.certifications_count + self.software_count
+        matched_items = (
+            self.skills_matched_count
+            + self.certifications_matched_count
+            + self.software_matched_count
+        )
+
+        if total_items == 0:
+            return 1.0
+        return matched_items / total_items
+
+    @classmethod
+    def from_parsed_cv(
+        cls,
+        cv: "ParsedCV",
+        skills_matched: int = 0,
+        certs_matched: int = 0,
+        software_matched: int = 0,
+    ) -> "CVCompletenessAudit":
+        """
+        Create audit from parsed CV.
+
+        Args:
+            cv: Parsed CV data
+            skills_matched: Count of skills matched to taxonomy
+            certs_matched: Count of certifications matched to taxonomy
+            software_matched: Count of software matched to taxonomy
+
+        Returns:
+            CVCompletenessAudit instance
+        """
+        audit = cls()
+
+        # Check personal info
+        if cv.personal:
+            audit.has_personal = True
+            audit.has_name = bool(cv.personal.first_name and cv.personal.last_name)
+            audit.has_email = bool(cv.personal.email)
+            audit.has_phone = bool(cv.personal.phone)
+            audit.has_location = bool(
+                cv.personal.address_city or cv.personal.address_region
+            )
+            audit.has_dob = cv.personal.date_of_birth is not None
+
+        # Check sections
+        audit.has_education = len(cv.education) > 0
+        audit.education_count = len(cv.education)
+
+        audit.has_experience = len(cv.experience) > 0
+        audit.experience_count = len(cv.experience)
+
+        audit.has_skills = len(cv.skills) > 0
+        audit.skills_count = len(cv.skills)
+        # Use provided matched count, or count items with skill_id
+        audit.skills_matched_count = skills_matched or len(
+            [s for s in cv.skills if s.skill_id]
+        )
+
+        audit.has_languages = len(cv.languages) > 0
+        audit.languages_count = len(cv.languages)
+
+        audit.has_certifications = len(cv.certifications) > 0
+        audit.certifications_count = len(cv.certifications)
+        audit.certifications_matched_count = certs_matched or len(
+            [c for c in cv.certifications if c.certification_id]
+        )
+
+        audit.has_driving_licenses = len(cv.driving_licenses) > 0
+        audit.driving_licenses_count = len(cv.driving_licenses)
+
+        audit.has_software = len(cv.software) > 0
+        audit.software_count = len(cv.software)
+        audit.software_matched_count = software_matched or len(
+            [s for s in cv.software if s.software_id]
+        )
+
+        # Calculate confidence metrics
+        confidences = []
+        section_confidences = {}
+
+        if cv.personal and cv.personal.confidence:
+            confidences.append(cv.personal.confidence)
+            section_confidences["personal"] = cv.personal.confidence
+
+        if cv.education:
+            edu_confs = [e.confidence for e in cv.education if e.confidence]
+            if edu_confs:
+                edu_conf = sum(edu_confs) / len(edu_confs)
+                confidences.append(edu_conf)
+                section_confidences["education"] = edu_conf
+
+        if cv.experience:
+            exp_confs = [e.confidence for e in cv.experience if e.confidence]
+            if exp_confs:
+                exp_conf = sum(exp_confs) / len(exp_confs)
+                confidences.append(exp_conf)
+                section_confidences["experience"] = exp_conf
+
+        if cv.skills:
+            skill_confs = [s.confidence for s in cv.skills if s.confidence]
+            if skill_confs:
+                skill_conf = sum(skill_confs) / len(skill_confs)
+                confidences.append(skill_conf)
+                section_confidences["skills"] = skill_conf
+
+        if confidences:
+            audit.avg_section_confidence = sum(confidences) / len(confidences)
+
+        if section_confidences:
+            lowest_section = min(section_confidences, key=section_confidences.get)
+            audit.lowest_confidence_section = lowest_section
+            audit.lowest_confidence_value = section_confidences[lowest_section]
+
+        # Identify missing critical fields
+        if not audit.has_name:
+            audit.missing_critical.append("name")
+        if not audit.has_email and not audit.has_phone:
+            audit.missing_critical.append("contact_info")
+        if not audit.has_education and not audit.has_experience:
+            audit.missing_critical.append("work_or_education_history")
+
+        # Identify missing optional fields
+        if not audit.has_skills:
+            audit.missing_optional.append("skills")
+        if not audit.has_languages:
+            audit.missing_optional.append("languages")
+        if not audit.has_location:
+            audit.missing_optional.append("location")
+
+        # Identify data quality issues
+        if audit.skills_count > 0 and audit.taxonomy_coverage < 0.5:
+            audit.data_quality_issues.append("low_taxonomy_coverage")
+
+        if audit.lowest_confidence_value < 0.6:
+            audit.data_quality_issues.append(
+                f"low_confidence_{audit.lowest_confidence_section}"
+            )
+
+        return audit
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "completeness_score": round(self.completeness_score, 4),
+            "quality_level": self.quality_level,
+            "taxonomy_coverage": round(self.taxonomy_coverage, 4),
+            "sections": {
+                "personal": self.has_personal,
+                "education": {"present": self.has_education, "count": self.education_count},
+                "experience": {"present": self.has_experience, "count": self.experience_count},
+                "skills": {
+                    "present": self.has_skills,
+                    "count": self.skills_count,
+                    "matched": self.skills_matched_count,
+                },
+                "languages": {"present": self.has_languages, "count": self.languages_count},
+                "certifications": {
+                    "present": self.has_certifications,
+                    "count": self.certifications_count,
+                    "matched": self.certifications_matched_count,
+                },
+                "driving_licenses": {
+                    "present": self.has_driving_licenses,
+                    "count": self.driving_licenses_count,
+                },
+                "software": {
+                    "present": self.has_software,
+                    "count": self.software_count,
+                    "matched": self.software_matched_count,
+                },
+            },
+            "personal_info": {
+                "name": self.has_name,
+                "email": self.has_email,
+                "phone": self.has_phone,
+                "location": self.has_location,
+                "date_of_birth": self.has_dob,
+            },
+            "confidence": {
+                "average": round(self.avg_section_confidence, 4),
+                "lowest_section": self.lowest_confidence_section,
+                "lowest_value": round(self.lowest_confidence_value, 4),
+            },
+            "issues": {
+                "missing_critical": self.missing_critical,
+                "missing_optional": self.missing_optional,
+                "data_quality": self.data_quality_issues,
+            },
+        }

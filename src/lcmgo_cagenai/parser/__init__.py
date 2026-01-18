@@ -10,6 +10,7 @@ See docs/08-BACKEND-FEATURES.md for architecture details.
 from .cv_parser import CVParser, parse_cv
 from .db_writer import DatabaseWriter, WriteVerification
 from .schema import (
+    CVCompletenessAudit,
     ParsedCertification,
     ParsedCV,
     ParsedDrivingLicense,
@@ -35,6 +36,7 @@ __all__ = [
     "ParsedLanguage",
     "ParsedCertification",
     "ParsedDrivingLicense",
+    "CVCompletenessAudit",  # Task 1.3 - CV Completeness Audit
     # Support classes
     "TaxonomyMapper",
     "DatabaseWriter",
