@@ -8,7 +8,7 @@ See docs/08-BACKEND-FEATURES.md for architecture details.
 """
 
 from .cv_parser import CVParser, parse_cv
-from .db_writer import DatabaseWriter
+from .db_writer import DatabaseWriter, WriteVerification
 from .schema import (
     ParsedCertification,
     ParsedCV,
@@ -38,5 +38,6 @@ __all__ = [
     # Support classes
     "TaxonomyMapper",
     "DatabaseWriter",
+    "WriteVerification",  # Task 1.2 - Post-write verification
     "SearchIndexer",
 ]

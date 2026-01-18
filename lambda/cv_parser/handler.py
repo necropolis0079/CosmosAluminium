@@ -195,28 +195,44 @@ async def process_cv(
     # 6. Update state: STORING
     update_state(correlation_id, ProcessingStatus.STORING)
 
-    # 7. Write to PostgreSQL
+    # 7. Write to PostgreSQL with verification (Task 1.2)
     candidate_id = None
+    write_verification = None
     if DB_SECRET_ARN:
         try:
             logger.info("Writing to PostgreSQL")
             writer = DatabaseWriter(db_secret_arn=DB_SECRET_ARN, region=AWS_REGION)
-            candidate_id = await writer.write_candidate(
+            candidate_id, write_verification = await writer.write_candidate(
                 parsed_cv,
                 correlation_id,
                 source_key=metadata.get("source_key"),
+                verify_write=True,  # Enable post-write verification
             )
             writer.close()
+
+            # Log verification results
+            if write_verification:
+                logger.info(
+                    f"Database write verification: success={write_verification.success}, "
+                    f"coverage={write_verification.coverage_score:.2%}, "
+                    f"unmatched={write_verification.total_unmatched}"
+                )
+
             logger.info(f"Created/updated candidate: {candidate_id}")
 
         except Exception as e:
             logger.error(f"Database write failed: {e}")
             # Continue to try indexing anyway
 
-    # 8. Update state: INDEXING
-    update_state(correlation_id, ProcessingStatus.INDEXING, {
+    # 8. Update state: INDEXING (include verification info)
+    indexing_data = {
         "candidate_id": str(candidate_id) if candidate_id else None,
-    })
+    }
+    if write_verification:
+        indexing_data["verification_success"] = write_verification.success
+        indexing_data["verification_coverage"] = write_verification.coverage_score
+
+    update_state(correlation_id, ProcessingStatus.INDEXING, indexing_data)
 
     # 9. Index to OpenSearch
     if OPENSEARCH_ENDPOINT and candidate_id:
@@ -246,22 +262,31 @@ async def process_cv(
         },
     )
 
-    # 11. Update state: COMPLETED
-    update_state(
-        correlation_id,
-        ProcessingStatus.COMPLETED,
-        {
-            "candidate_id": str(candidate_id) if candidate_id else None,
-            "parsed_key": parsed_key,
-            "overall_confidence": parsed_cv.overall_confidence,
-            "completeness_score": parsed_cv.completeness_score,
-            "skills_count": len(parsed_cv.skills),
-            "experience_count": len(parsed_cv.experience),
-            "education_count": len(parsed_cv.education),
-        },
-    )
+    # 11. Update state: COMPLETED (include verification in final state)
+    completed_data = {
+        "candidate_id": str(candidate_id) if candidate_id else None,
+        "parsed_key": parsed_key,
+        "overall_confidence": parsed_cv.overall_confidence,
+        "completeness_score": parsed_cv.completeness_score,
+        "skills_count": len(parsed_cv.skills),
+        "experience_count": len(parsed_cv.experience),
+        "education_count": len(parsed_cv.education),
+    }
 
-    return {
+    # Add verification results to final state
+    if write_verification:
+        completed_data["verification_success"] = write_verification.success
+        completed_data["verification_coverage"] = write_verification.coverage_score
+        completed_data["verification_unmatched"] = write_verification.total_unmatched
+        if write_verification.errors:
+            completed_data["verification_errors"] = len(write_verification.errors)
+        if write_verification.warnings:
+            completed_data["verification_warnings"] = len(write_verification.warnings)
+
+    update_state(correlation_id, ProcessingStatus.COMPLETED, completed_data)
+
+    # Build response with verification summary
+    response = {
         "statusCode": 200,
         "correlation_id": correlation_id,
         "status": ProcessingStatus.COMPLETED,
@@ -277,6 +302,18 @@ async def process_cv(
             "certifications": len(parsed_cv.certifications),
         },
     }
+
+    # Add verification to response
+    if write_verification:
+        response["verification"] = {
+            "success": write_verification.success,
+            "coverage": write_verification.coverage_score,
+            "unmatched": write_verification.total_unmatched,
+            "errors": len(write_verification.errors),
+            "warnings": len(write_verification.warnings),
+        }
+
+    return response
 
 
 def update_state(

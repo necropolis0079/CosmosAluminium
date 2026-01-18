@@ -6,10 +6,12 @@ Writes parsed CV data to the PostgreSQL v4.0 schema, handling:
 - Education, experience, skills, languages, certifications, licenses
 - GDPR consent records
 - Duplicate detection
+- Post-write verification (Task 1.2)
 """
 
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -21,6 +23,117 @@ from .schema import ParsedCV
 from .taxonomy_mapper import normalize_text
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class WriteVerification:
+    """
+    Result of post-write verification.
+
+    Tracks expected vs actual record counts for each CV section,
+    enabling detection of silent data loss during database writes.
+
+    Task 1.2: Post-Write Verification
+    """
+
+    candidate_id: UUID
+    success: bool = False
+
+    # Expected vs actual counts
+    education_expected: int = 0
+    education_actual: int = 0
+    experience_expected: int = 0
+    experience_actual: int = 0
+    skills_expected: int = 0
+    skills_actual: int = 0
+    skills_unmatched: int = 0
+    languages_expected: int = 0
+    languages_actual: int = 0
+    certifications_expected: int = 0
+    certifications_actual: int = 0
+    certifications_unmatched: int = 0
+    driving_licenses_expected: int = 0
+    driving_licenses_actual: int = 0
+    software_expected: int = 0
+    software_actual: int = 0
+    software_unmatched: int = 0
+
+    # Error and warning details
+    errors: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+
+    @property
+    def coverage_score(self) -> float:
+        """Calculate what percentage of expected records were written."""
+        total_expected = (
+            self.education_expected
+            + self.experience_expected
+            + self.skills_expected
+            + self.languages_expected
+            + self.certifications_expected
+            + self.driving_licenses_expected
+            + self.software_expected
+        )
+        total_actual = (
+            self.education_actual
+            + self.experience_actual
+            + self.skills_actual
+            + self.languages_actual
+            + self.certifications_actual
+            + self.driving_licenses_actual
+            + self.software_actual
+        )
+
+        if total_expected == 0:
+            return 1.0
+        return total_actual / total_expected
+
+    @property
+    def total_unmatched(self) -> int:
+        """Total count of unmatched taxonomy items."""
+        return self.skills_unmatched + self.software_unmatched + self.certifications_unmatched
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for logging/storage."""
+        return {
+            "candidate_id": str(self.candidate_id),
+            "success": self.success,
+            "coverage_score": round(self.coverage_score, 4),
+            "total_unmatched": self.total_unmatched,
+            "education": {
+                "expected": self.education_expected,
+                "actual": self.education_actual,
+            },
+            "experience": {
+                "expected": self.experience_expected,
+                "actual": self.experience_actual,
+            },
+            "skills": {
+                "expected": self.skills_expected,
+                "actual": self.skills_actual,
+                "unmatched": self.skills_unmatched,
+            },
+            "languages": {
+                "expected": self.languages_expected,
+                "actual": self.languages_actual,
+            },
+            "certifications": {
+                "expected": self.certifications_expected,
+                "actual": self.certifications_actual,
+                "unmatched": self.certifications_unmatched,
+            },
+            "driving_licenses": {
+                "expected": self.driving_licenses_expected,
+                "actual": self.driving_licenses_actual,
+            },
+            "software": {
+                "expected": self.software_expected,
+                "actual": self.software_actual,
+                "unmatched": self.software_unmatched,
+            },
+            "errors": self.errors,
+            "warnings": self.warnings,
+        }
 
 
 class DatabaseWriter:
@@ -91,24 +204,27 @@ class DatabaseWriter:
         correlation_id: str,
         source_key: str | None = None,
         check_duplicates: bool = True,
-    ) -> UUID:
+        verify_write: bool = True,
+    ) -> tuple[UUID, WriteVerification | None]:
         """
-        Write parsed CV data to database.
+        Write parsed CV data to database with post-write verification.
 
         Args:
             parsed_cv: Parsed CV data
             correlation_id: Processing correlation ID
             source_key: S3 key of source file
             check_duplicates: Whether to check for duplicate candidates
+            verify_write: Whether to verify records after write (Task 1.2)
 
         Returns:
-            UUID of created/updated candidate
+            Tuple of (candidate_id, WriteVerification result or None)
 
         Raises:
             Exception: On database errors
         """
         conn = self._get_connection()
         cursor = conn.cursor()
+        verification = None
 
         try:
             # pg8000 uses autocommit=False by default, so transactions are implicit
@@ -161,7 +277,33 @@ class DatabaseWriter:
             conn.commit()
 
             logger.info(f"Successfully wrote candidate {candidate_id}")
-            return candidate_id
+
+            # Post-write verification (Task 1.2)
+            if verify_write:
+                verification = self._verify_write(
+                    cursor, candidate_id, parsed_cv,
+                    skill_stats, cert_stats, software_stats
+                )
+
+                if not verification.success:
+                    logger.error(
+                        f"Write verification FAILED for {candidate_id}: {verification.errors}"
+                    )
+                elif verification.warnings:
+                    logger.warning(
+                        f"Write verification passed with warnings for {candidate_id}: "
+                        f"{len(verification.warnings)} warnings"
+                    )
+                else:
+                    logger.info(
+                        f"Write verification PASSED for {candidate_id}: "
+                        f"coverage={verification.coverage_score:.2%}"
+                    )
+
+                # Store verification result in DynamoDB
+                self._store_verification(candidate_id, verification, correlation_id)
+
+            return candidate_id, verification
 
         except Exception as e:
             conn.rollback()
@@ -791,6 +933,231 @@ class DatabaseWriter:
                 str(candidate_id),
             ),
         )
+
+    def _verify_write(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        parsed_cv: ParsedCV,
+        skill_stats: dict,
+        cert_stats: dict,
+        software_stats: dict,
+    ) -> WriteVerification:
+        """
+        Verify all records were written correctly after commit.
+
+        Compares expected counts (from parsed CV) with actual counts in database.
+        This is Task 1.2: Post-Write Verification.
+
+        Args:
+            cursor: Database cursor
+            candidate_id: ID of written candidate
+            parsed_cv: Original parsed CV data
+            skill_stats: Stats from _insert_skills
+            cert_stats: Stats from _insert_certifications
+            software_stats: Stats from _insert_software
+
+        Returns:
+            WriteVerification with counts, success status, and any errors/warnings
+        """
+        verification = WriteVerification(
+            candidate_id=candidate_id,
+            success=False,
+            # Expected counts - matched items only
+            education_expected=len(parsed_cv.education),
+            experience_expected=len(parsed_cv.experience),
+            skills_expected=skill_stats.get("inserted", 0) + skill_stats.get("unmatched", 0),
+            skills_unmatched=skill_stats.get("unmatched", 0),
+            languages_expected=len(parsed_cv.languages),
+            certifications_expected=cert_stats.get("inserted", 0),
+            certifications_unmatched=cert_stats.get("unmatched", 0),
+            driving_licenses_expected=len(parsed_cv.driving_licenses),
+            software_expected=software_stats.get("inserted", 0) + software_stats.get("unmatched", 0),
+            software_unmatched=software_stats.get("unmatched", 0),
+        )
+
+        # Verify candidate exists
+        cursor.execute("SELECT 1 FROM candidates WHERE id = %s", (str(candidate_id),))
+        if not cursor.fetchone():
+            verification.errors.append("Candidate record not found after insert")
+            return verification
+
+        # Count education records
+        cursor.execute(
+            "SELECT COUNT(*) FROM candidate_education WHERE candidate_id = %s",
+            (str(candidate_id),),
+        )
+        verification.education_actual = cursor.fetchone()[0]
+
+        # Count experience records
+        cursor.execute(
+            "SELECT COUNT(*) FROM candidate_experience WHERE candidate_id = %s",
+            (str(candidate_id),),
+        )
+        verification.experience_actual = cursor.fetchone()[0]
+
+        # Count skill records (matched only - unmatched go to unmatched_taxonomy_items)
+        cursor.execute(
+            "SELECT COUNT(*) FROM candidate_skills WHERE candidate_id = %s",
+            (str(candidate_id),),
+        )
+        verification.skills_actual = cursor.fetchone()[0]
+
+        # Count language records
+        cursor.execute(
+            "SELECT COUNT(*) FROM candidate_languages WHERE candidate_id = %s",
+            (str(candidate_id),),
+        )
+        verification.languages_actual = cursor.fetchone()[0]
+
+        # Count certification records (all certs are inserted)
+        cursor.execute(
+            "SELECT COUNT(*) FROM candidate_certifications WHERE candidate_id = %s",
+            (str(candidate_id),),
+        )
+        verification.certifications_actual = cursor.fetchone()[0]
+
+        # Count driving license records
+        cursor.execute(
+            "SELECT COUNT(*) FROM candidate_driving_licenses WHERE candidate_id = %s",
+            (str(candidate_id),),
+        )
+        verification.driving_licenses_actual = cursor.fetchone()[0]
+
+        # Count software records (matched only)
+        cursor.execute(
+            "SELECT COUNT(*) FROM candidate_software WHERE candidate_id = %s",
+            (str(candidate_id),),
+        )
+        verification.software_actual = cursor.fetchone()[0]
+
+        # Check for mismatches - education and experience are critical
+        if verification.education_actual != verification.education_expected:
+            verification.errors.append(
+                f"Education mismatch: expected {verification.education_expected}, got {verification.education_actual}"
+            )
+
+        if verification.experience_actual != verification.experience_expected:
+            verification.errors.append(
+                f"Experience mismatch: expected {verification.experience_expected}, got {verification.experience_actual}"
+            )
+
+        # Skills: matched count should equal inserted count
+        expected_matched_skills = skill_stats.get("inserted", 0)
+        if verification.skills_actual != expected_matched_skills:
+            verification.errors.append(
+                f"Skills mismatch: expected {expected_matched_skills} matched, got {verification.skills_actual}"
+            )
+
+        if verification.languages_actual != verification.languages_expected:
+            verification.warnings.append(
+                f"Languages mismatch: expected {verification.languages_expected}, got {verification.languages_actual}"
+            )
+
+        if verification.certifications_actual != verification.certifications_expected:
+            verification.warnings.append(
+                f"Certifications mismatch: expected {verification.certifications_expected}, got {verification.certifications_actual}"
+            )
+
+        if verification.driving_licenses_actual != verification.driving_licenses_expected:
+            verification.warnings.append(
+                f"Driving licenses mismatch: expected {verification.driving_licenses_expected}, got {verification.driving_licenses_actual}"
+            )
+
+        # Software: matched count should equal inserted count
+        expected_matched_software = software_stats.get("inserted", 0)
+        if verification.software_actual != expected_matched_software:
+            verification.warnings.append(
+                f"Software mismatch: expected {expected_matched_software} matched, got {verification.software_actual}"
+            )
+
+        # Add informational warnings for unmatched items
+        if verification.skills_unmatched > 0:
+            verification.warnings.append(
+                f"{verification.skills_unmatched} skills captured as unmatched (pending taxonomy review)"
+            )
+
+        if verification.software_unmatched > 0:
+            verification.warnings.append(
+                f"{verification.software_unmatched} software captured as unmatched (pending taxonomy review)"
+            )
+
+        if verification.certifications_unmatched > 0:
+            verification.warnings.append(
+                f"{verification.certifications_unmatched} certifications captured as unmatched (pending taxonomy review)"
+            )
+
+        # Determine overall success - only critical errors cause failure
+        verification.success = len(verification.errors) == 0
+
+        return verification
+
+    def _store_verification(
+        self,
+        candidate_id: UUID,
+        verification: WriteVerification,
+        correlation_id: str,
+    ) -> None:
+        """
+        Store verification result in DynamoDB for tracking.
+
+        Updates the cv-processing-state table with verification data,
+        enabling monitoring and debugging of data integrity.
+
+        Args:
+            candidate_id: Candidate UUID
+            verification: WriteVerification result
+            correlation_id: Processing correlation ID
+        """
+        from decimal import Decimal
+
+        def convert_floats(obj: Any) -> Any:
+            """Convert floats to Decimal for DynamoDB compatibility."""
+            if isinstance(obj, float):
+                return Decimal(str(obj))
+            elif isinstance(obj, dict):
+                return {k: convert_floats(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_floats(i) for i in obj]
+            return obj
+
+        try:
+            dynamodb = boto3.resource("dynamodb", region_name=self.region)
+            table = dynamodb.Table("lcmgo-cagenai-prod-cv-processing-state")
+
+            # Determine status based on verification result
+            if verification.success and not verification.warnings:
+                status = "completed"
+            elif verification.success:
+                status = "completed_with_warnings"
+            else:
+                status = "completed_with_errors"
+
+            # Convert verification dict to DynamoDB-compatible format
+            verification_data = convert_floats(verification.to_dict())
+
+            table.update_item(
+                Key={"cv_id": correlation_id},
+                UpdateExpression="""
+                    SET write_verification = :v,
+                        verification_time = :t,
+                        #s = :status,
+                        candidate_id = :cid
+                """,
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={
+                    ":v": verification_data,
+                    ":t": datetime.now(timezone.utc).isoformat(),
+                    ":status": status,
+                    ":cid": str(candidate_id),
+                },
+            )
+
+            logger.debug(f"Stored verification for {correlation_id}: {status}")
+
+        except Exception as e:
+            # Don't fail the whole operation if DynamoDB update fails
+            logger.warning(f"Failed to store verification in DynamoDB: {e}")
 
     @staticmethod
     def _get_quality_level(score: float) -> str:
