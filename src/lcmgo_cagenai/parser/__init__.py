@@ -22,6 +22,7 @@ from .schema import (
 )
 from .search_indexer import SearchIndexer
 from .taxonomy_mapper import TaxonomyMapper
+from .validators import ValidationResult, validate_contact_info, validate_email, validate_phone
 
 __all__ = [
     # Main parser
@@ -42,4 +43,9 @@ __all__ = [
     "DatabaseWriter",
     "WriteVerification",  # Task 1.2 - Post-write verification
     "SearchIndexer",
+    # Validators - Task 1.7
+    "ValidationResult",
+    "validate_email",
+    "validate_phone",
+    "validate_contact_info",
 ]

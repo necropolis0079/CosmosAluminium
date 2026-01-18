@@ -210,6 +210,14 @@ class ParsedPersonal:
     photo_url: str | None = None
     confidence: float = 0.0
 
+    # Task 1.7: Email/Phone validation fields
+    email_warnings: list[str] = field(default_factory=list)
+    email_suggestions: list[str] = field(default_factory=list)
+    email_validated: bool = False
+    phone_warnings: list[str] = field(default_factory=list)
+    phone_suggestions: list[str] = field(default_factory=list)
+    phone_validated: bool = False
+
 
 @dataclass
 class ParsedEducation:

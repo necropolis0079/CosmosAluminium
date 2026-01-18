@@ -27,6 +27,7 @@ from .schema import (
     normalize_language_proficiency,
     normalize_skill_level,
 )
+from .validators import validate_email, validate_phone
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +385,29 @@ CV TEXT TO PARSE:
                 personal.military_status = MilitaryStatus(personal_data["military_status"])
             except ValueError:
                 personal.military_status = MilitaryStatus.UNKNOWN
+
+        # Task 1.7: Validate email and phone
+        email_validation = validate_email(personal.email)
+        personal.email_validated = True
+        if email_validation.warnings:
+            personal.email_warnings = email_validation.warnings
+            personal.email_suggestions = email_validation.suggestions
+            for warning in email_validation.warnings:
+                warnings.append(f"Email validation: {warning}")
+            logger.warning(
+                f"Email validation warnings for '{personal.email}': {email_validation.warnings}"
+            )
+
+        phone_validation = validate_phone(personal.phone)
+        personal.phone_validated = True
+        if phone_validation.warnings:
+            personal.phone_warnings = phone_validation.warnings
+            personal.phone_suggestions = phone_validation.suggestions
+            for warning in phone_validation.warnings:
+                warnings.append(f"Phone validation: {warning}")
+            logger.warning(
+                f"Phone validation warnings for '{personal.phone}': {phone_validation.warnings}"
+            )
 
         # Parse education
         education = []
