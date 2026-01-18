@@ -519,7 +519,7 @@ class TaxonomyMapper:
             query_embedding = await self.provider.embed_query(query)
 
             # Generate candidate embeddings (batch)
-            candidate_response = await self.provider.embed(candidates[:100])  # Limit batch size
+            candidate_response = await self.provider.embed(candidates[:96])  # Cohere v4 max is 96
 
             # Calculate cosine similarities
             best_match = None

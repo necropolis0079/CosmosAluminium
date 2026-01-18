@@ -269,12 +269,15 @@ class BedrockProvider(LLMProvider):
 
         logger.debug(f"Bedrock embedding request: {len(texts)} texts")
 
-        # Build request body for Cohere
+        # Build request body for Cohere Embed v4
         body = {
             "texts": texts,
-            "input_type": "search_document",  # or "search_query" for queries
-            "truncate": "END",
+            "input_type": "search_document",
+            "embedding_types": ["float"],
+            "output_dimension": 1024,  # Match OpenSearch k-NN config
         }
+
+        logger.info(f"Cohere embed request: model={model_id}, texts_count={len(texts)}, first_text_len={len(texts[0]) if texts else 0}")
 
         # Invoke model
         response = self.client.invoke_model(
@@ -287,8 +290,19 @@ class BedrockProvider(LLMProvider):
         response_body = json.loads(response["body"].read())
         latency_ms = (time.time() - start) * 1000
 
+        # Cohere Embed v4 returns embeddings as {"float": [[...]]} or {"int8": [[...]]}
+        # Handle both new nested format and legacy flat format
+        embeddings_data = response_body["embeddings"]
+        if isinstance(embeddings_data, dict):
+            # New format: {"float": [[...]], ...} or {"int8": [[...]], ...}
+            # Prefer float format
+            embeddings = embeddings_data.get("float") or embeddings_data.get("int8") or []
+        else:
+            # Legacy format: [[...]]
+            embeddings = embeddings_data
+
         return EmbeddingResponse(
-            embeddings=response_body["embeddings"],
+            embeddings=embeddings,
             model=model_id,
             input_tokens=response_body.get("meta", {}).get("billed_units", {}).get("input_tokens", 0),
             latency_ms=latency_ms,
@@ -308,21 +322,37 @@ class BedrockProvider(LLMProvider):
         """
         model_id = EU_MODEL_IDS[ModelType.COHERE_EMBED]
 
+        # Cohere Embed v4 request body
         body = {
             "texts": [query],
             "input_type": "search_query",
-            "truncate": "END",
+            "embedding_types": ["float"],
+            "output_dimension": 1024,  # Match OpenSearch k-NN config
         }
 
-        response = self.client.invoke_model(
-            modelId=model_id,
-            body=json.dumps(body),
-            contentType="application/json",
-            accept="application/json",
-        )
+        logger.info(f"Cohere embed_query request: model={model_id}, query_len={len(query)}")
 
-        response_body = json.loads(response["body"].read())
-        return response_body["embeddings"][0]
+        try:
+            response = self.client.invoke_model(
+                modelId=model_id,
+                body=json.dumps(body),
+                contentType="application/json",
+                accept="application/json",
+            )
+
+            response_body = json.loads(response["body"].read())
+
+            # Cohere Embed v4 returns embeddings as {"float": [[...]]} or {"int8": [[...]]}
+            embeddings_data = response_body["embeddings"]
+            if isinstance(embeddings_data, dict):
+                embeddings = embeddings_data.get("float") or embeddings_data.get("int8") or []
+            else:
+                embeddings = embeddings_data
+
+            return embeddings[0] if embeddings else []
+        except Exception as e:
+            logger.error(f"Cohere embed_query failed: {type(e).__name__}: {e}")
+            raise
 
 
 # Convenience function for simple usage
