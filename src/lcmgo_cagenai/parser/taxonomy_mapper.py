@@ -53,12 +53,20 @@ class TaxonomyMapper:
     - role_taxonomy
     - software_taxonomy
 
+    Matching strategy (cascading priority):
+    1. Exact match on normalized names
+    2. Alias/substring matching
+    3. Fuzzy matching using pg_trgm similarity (Task 1.5)
+    4. Semantic matching using Cohere embeddings
+
     Example:
         mapper = TaxonomyMapper(db_secret_arn="arn:aws:secretsmanager:...")
         mapped_cv = await mapper.map_all(parsed_cv)
     """
 
     SEMANTIC_THRESHOLD = 0.85  # Minimum similarity for semantic matching
+    FUZZY_THRESHOLD = 0.6  # Minimum similarity for fuzzy matching (pg_trgm)
+    FUZZY_CONFIDENT_THRESHOLD = 0.75  # Above this = confident fuzzy match
 
     def __init__(
         self,
@@ -464,14 +472,245 @@ class TaxonomyMapper:
     # Minimum similarity for suggested matches (below threshold but worth capturing)
     SUGGESTED_THRESHOLD = 0.60
 
+    # =========================================================================
+    # Fuzzy Matching Methods (Task 1.5)
+    # Uses PostgreSQL pg_trgm extension for trigram-based similarity matching
+    # =========================================================================
+
+    async def _fuzzy_match_skill(
+        self, skill_name: str, threshold: float | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Fuzzy match skill name using pg_trgm similarity.
+
+        Args:
+            skill_name: Skill to match
+            threshold: Minimum similarity (0-1), defaults to FUZZY_THRESHOLD
+
+        Returns:
+            Best matching taxonomy entry or None
+        """
+        if threshold is None:
+            threshold = self.FUZZY_THRESHOLD
+
+        normalized = normalize_text(skill_name)
+        conn = self._get_connection()
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    id, canonical_id, name_en, name_el, category,
+                    GREATEST(
+                        similarity(LOWER(name_en), %s),
+                        COALESCE(similarity(LOWER(name_el), %s), 0)
+                    ) as sim_score
+                FROM skill_taxonomy
+                WHERE is_active = true
+                  AND (similarity(LOWER(name_en), %s) > %s
+                       OR similarity(LOWER(name_el), %s) > %s)
+                ORDER BY sim_score DESC
+                LIMIT 1
+            """, (normalized, normalized, normalized, threshold,
+                  normalized, threshold))
+
+            result = cursor.fetchone()
+            cursor.close()
+
+            if result:
+                return {
+                    "id": UUID(str(result[0])),
+                    "canonical_id": result[1],
+                    "name_normalized": normalize_text(result[2]),  # Use name_en as normalized
+                    "category": result[4],
+                    "similarity": float(result[5]),
+                    "match_type": "fuzzy",
+                }
+
+        except Exception as e:
+            logger.warning(f"Fuzzy skill match failed: {e}")
+
+        return None
+
+    async def _fuzzy_match_certification(
+        self, cert_name: str, threshold: float | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Fuzzy match certification name using pg_trgm similarity.
+
+        Args:
+            cert_name: Certification to match
+            threshold: Minimum similarity (0-1), defaults to FUZZY_THRESHOLD
+
+        Returns:
+            Best matching taxonomy entry or None
+        """
+        if threshold is None:
+            threshold = self.FUZZY_THRESHOLD
+
+        normalized = normalize_text(cert_name)
+        conn = self._get_connection()
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    id, canonical_id, name_en, name_el, issuing_organization,
+                    GREATEST(
+                        similarity(LOWER(name_en), %s),
+                        COALESCE(similarity(LOWER(name_el), %s), 0)
+                    ) as sim_score
+                FROM certification_taxonomy
+                WHERE is_active = true
+                  AND (similarity(LOWER(name_en), %s) > %s
+                       OR similarity(LOWER(name_el), %s) > %s)
+                ORDER BY sim_score DESC
+                LIMIT 1
+            """, (normalized, normalized, normalized, threshold,
+                  normalized, threshold))
+
+            result = cursor.fetchone()
+            cursor.close()
+
+            if result:
+                return {
+                    "id": UUID(str(result[0])),
+                    "canonical_id": result[1],
+                    "name_normalized": normalize_text(result[2]),
+                    "issuing_organization": result[4],
+                    "similarity": float(result[5]),
+                    "match_type": "fuzzy",
+                }
+
+        except Exception as e:
+            logger.warning(f"Fuzzy certification match failed: {e}")
+
+        return None
+
+    async def _fuzzy_match_role(
+        self, job_title: str, threshold: float | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Fuzzy match job title using pg_trgm similarity.
+
+        Args:
+            job_title: Job title to match
+            threshold: Minimum similarity (0-1), defaults to FUZZY_THRESHOLD
+
+        Returns:
+            Best matching taxonomy entry or None
+        """
+        if threshold is None:
+            threshold = self.FUZZY_THRESHOLD
+
+        normalized = normalize_text(job_title)
+        conn = self._get_connection()
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    id, canonical_id, name_en, name_el, category,
+                    GREATEST(
+                        similarity(LOWER(name_en), %s),
+                        COALESCE(similarity(LOWER(name_el), %s), 0)
+                    ) as sim_score
+                FROM role_taxonomy
+                WHERE is_active = true
+                  AND (similarity(LOWER(name_en), %s) > %s
+                       OR similarity(LOWER(name_el), %s) > %s)
+                ORDER BY sim_score DESC
+                LIMIT 1
+            """, (normalized, normalized, normalized, threshold,
+                  normalized, threshold))
+
+            result = cursor.fetchone()
+            cursor.close()
+
+            if result:
+                return {
+                    "id": UUID(str(result[0])),
+                    "canonical_id": result[1],
+                    "name_normalized": normalize_text(result[2]),
+                    "category": result[4],
+                    "similarity": float(result[5]),
+                    "match_type": "fuzzy",
+                }
+
+        except Exception as e:
+            logger.warning(f"Fuzzy role match failed: {e}")
+
+        return None
+
+    async def _fuzzy_match_software(
+        self, sw_name: str, threshold: float | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Fuzzy match software name using pg_trgm similarity.
+
+        Args:
+            sw_name: Software to match
+            threshold: Minimum similarity (0-1), defaults to FUZZY_THRESHOLD
+
+        Returns:
+            Best matching taxonomy entry or None
+        """
+        if threshold is None:
+            threshold = self.FUZZY_THRESHOLD
+
+        normalized = normalize_text(sw_name)
+        conn = self._get_connection()
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    id, canonical_id, name, vendor, category,
+                    similarity(LOWER(name), %s) as sim_score
+                FROM software_taxonomy
+                WHERE is_active = true
+                  AND similarity(LOWER(name), %s) > %s
+                ORDER BY sim_score DESC
+                LIMIT 1
+            """, (normalized, normalized, threshold))
+
+            result = cursor.fetchone()
+            cursor.close()
+
+            if result:
+                return {
+                    "id": UUID(str(result[0])),
+                    "canonical_id": result[1],
+                    "name_normalized": normalize_text(result[2]),
+                    "vendor": result[3],
+                    "category": result[4],
+                    "similarity": float(result[5]),
+                    "match_type": "fuzzy",
+                }
+
+        except Exception as e:
+            logger.warning(f"Fuzzy software match failed: {e}")
+
+        return None
+
+    # =========================================================================
+    # Main Matching Methods (Updated for Task 1.5 - Fuzzy Fallback)
+    # =========================================================================
+
     async def _match_skill(self, skill_name: str) -> dict[str, Any] | None:
         """
         Match skill name to taxonomy entry.
 
+        Cascading match strategy (Task 1.5):
+        1. Exact match
+        2. Substring match
+        3. Fuzzy match (pg_trgm)
+        4. Semantic match (Cohere embeddings)
+
         Returns dict with match info including:
         - id: UUID of matched taxonomy entry (None if no confident match)
         - canonical_id: Canonical ID string
-        - match_type: 'exact', 'substring', 'semantic', 'suggested', or None
+        - match_type: 'exact', 'substring', 'fuzzy', 'semantic', 'suggested', or 'none'
         - similarity: Match confidence score (1.0 for exact, 0.9 for substring, etc.)
         - suggested_id/suggested_canonical_id: Populated for suggested matches
 
@@ -498,7 +737,30 @@ class TaxonomyMapper:
                 result["similarity"] = 0.9
                 return result
 
-        # 3. Semantic matching (optional)
+        # 3. Fuzzy match using pg_trgm (Task 1.5)
+        fuzzy_result = await self._fuzzy_match_skill(skill_name)
+        if fuzzy_result:
+            if fuzzy_result["similarity"] >= self.FUZZY_CONFIDENT_THRESHOLD:
+                # Confident fuzzy match
+                logger.debug(
+                    f"Fuzzy match: '{skill_name}' -> '{fuzzy_result['name_normalized']}' "
+                    f"(sim={fuzzy_result['similarity']:.3f})"
+                )
+                return fuzzy_result
+
+            if fuzzy_result["similarity"] >= self.FUZZY_THRESHOLD:
+                # Below confident threshold but worth suggesting
+                return {
+                    "id": None,
+                    "canonical_id": None,
+                    "name_normalized": None,
+                    "match_type": "fuzzy_suggested",
+                    "similarity": fuzzy_result["similarity"],
+                    "suggested_id": fuzzy_result["id"],
+                    "suggested_canonical_id": fuzzy_result["canonical_id"],
+                }
+
+        # 4. Semantic matching (optional)
         if self.use_semantic_matching:
             match_name, score = await self._semantic_match_with_score(
                 skill_name, list(self._skill_cache.keys())
@@ -536,16 +798,25 @@ class TaxonomyMapper:
         }
 
     async def _match_certification(self, cert_name: str) -> dict[str, Any] | None:
-        """Match certification name to taxonomy entry."""
+        """
+        Match certification name to taxonomy entry.
+
+        Cascading match strategy (Task 1.5):
+        1. Exact match
+        2. Substring match
+        3. Fuzzy match (pg_trgm)
+        4. Semantic match (Cohere embeddings)
+        """
         normalized = normalize_text(cert_name)
 
+        # 1. Exact match
         if normalized in self._cert_cache:
             result = self._cert_cache[normalized].copy()
             result["match_type"] = "exact"
             result["similarity"] = 1.0
             return result
 
-        # Substring match
+        # 2. Substring match
         for cached_name, entry in self._cert_cache.items():
             if cached_name in normalized or normalized in cached_name:
                 result = entry.copy()
@@ -553,6 +824,29 @@ class TaxonomyMapper:
                 result["similarity"] = 0.9
                 return result
 
+        # 3. Fuzzy match using pg_trgm (Task 1.5)
+        fuzzy_result = await self._fuzzy_match_certification(cert_name)
+        if fuzzy_result:
+            if fuzzy_result["similarity"] >= self.FUZZY_CONFIDENT_THRESHOLD:
+                logger.debug(
+                    f"Fuzzy match: '{cert_name}' -> '{fuzzy_result['name_normalized']}' "
+                    f"(sim={fuzzy_result['similarity']:.3f})"
+                )
+                return fuzzy_result
+
+            if fuzzy_result["similarity"] >= self.FUZZY_THRESHOLD:
+                return {
+                    "id": None,
+                    "canonical_id": None,
+                    "name_normalized": None,
+                    "issuing_organization": fuzzy_result.get("issuing_organization"),
+                    "match_type": "fuzzy_suggested",
+                    "similarity": fuzzy_result["similarity"],
+                    "suggested_id": fuzzy_result["id"],
+                    "suggested_canonical_id": fuzzy_result["canonical_id"],
+                }
+
+        # 4. Semantic matching
         if self.use_semantic_matching:
             match_name, score = await self._semantic_match_with_score(
                 cert_name, list(self._cert_cache.keys())
@@ -589,16 +883,25 @@ class TaxonomyMapper:
         }
 
     async def _match_role(self, job_title: str) -> dict[str, Any] | None:
-        """Match job title to role taxonomy entry."""
+        """
+        Match job title to role taxonomy entry.
+
+        Cascading match strategy (Task 1.5):
+        1. Exact match
+        2. Substring match
+        3. Fuzzy match (pg_trgm)
+        4. Semantic match (Cohere embeddings)
+        """
         normalized = normalize_text(job_title)
 
+        # 1. Exact match
         if normalized in self._role_cache:
             result = self._role_cache[normalized].copy()
             result["match_type"] = "exact"
             result["similarity"] = 1.0
             return result
 
-        # Substring match
+        # 2. Substring match
         for cached_name, entry in self._role_cache.items():
             if cached_name in normalized or normalized in cached_name:
                 result = entry.copy()
@@ -606,6 +909,28 @@ class TaxonomyMapper:
                 result["similarity"] = 0.9
                 return result
 
+        # 3. Fuzzy match using pg_trgm (Task 1.5)
+        fuzzy_result = await self._fuzzy_match_role(job_title)
+        if fuzzy_result:
+            if fuzzy_result["similarity"] >= self.FUZZY_CONFIDENT_THRESHOLD:
+                logger.debug(
+                    f"Fuzzy match: '{job_title}' -> '{fuzzy_result['name_normalized']}' "
+                    f"(sim={fuzzy_result['similarity']:.3f})"
+                )
+                return fuzzy_result
+
+            if fuzzy_result["similarity"] >= self.FUZZY_THRESHOLD:
+                return {
+                    "id": None,
+                    "canonical_id": None,
+                    "name_normalized": None,
+                    "match_type": "fuzzy_suggested",
+                    "similarity": fuzzy_result["similarity"],
+                    "suggested_id": fuzzy_result["id"],
+                    "suggested_canonical_id": fuzzy_result["canonical_id"],
+                }
+
+        # 4. Semantic matching
         if self.use_semantic_matching:
             match_name, score = await self._semantic_match_with_score(
                 job_title, list(self._role_cache.keys())
@@ -640,16 +965,25 @@ class TaxonomyMapper:
         }
 
     async def _match_software(self, sw_name: str) -> dict[str, Any] | None:
-        """Match software name to taxonomy entry."""
+        """
+        Match software name to taxonomy entry.
+
+        Cascading match strategy (Task 1.5):
+        1. Exact match
+        2. Substring match
+        3. Fuzzy match (pg_trgm)
+        4. Semantic match (Cohere embeddings)
+        """
         normalized = normalize_text(sw_name)
 
+        # 1. Exact match
         if normalized in self._software_cache:
             result = self._software_cache[normalized].copy()
             result["match_type"] = "exact"
             result["similarity"] = 1.0
             return result
 
-        # Substring match
+        # 2. Substring match
         for cached_name, entry in self._software_cache.items():
             if cached_name in normalized or normalized in cached_name:
                 result = entry.copy()
@@ -657,6 +991,29 @@ class TaxonomyMapper:
                 result["similarity"] = 0.9
                 return result
 
+        # 3. Fuzzy match using pg_trgm (Task 1.5)
+        fuzzy_result = await self._fuzzy_match_software(sw_name)
+        if fuzzy_result:
+            if fuzzy_result["similarity"] >= self.FUZZY_CONFIDENT_THRESHOLD:
+                logger.debug(
+                    f"Fuzzy match: '{sw_name}' -> '{fuzzy_result['name_normalized']}' "
+                    f"(sim={fuzzy_result['similarity']:.3f})"
+                )
+                return fuzzy_result
+
+            if fuzzy_result["similarity"] >= self.FUZZY_THRESHOLD:
+                return {
+                    "id": None,
+                    "canonical_id": None,
+                    "name_normalized": None,
+                    "vendor": fuzzy_result.get("vendor"),
+                    "match_type": "fuzzy_suggested",
+                    "similarity": fuzzy_result["similarity"],
+                    "suggested_id": fuzzy_result["id"],
+                    "suggested_canonical_id": fuzzy_result["canonical_id"],
+                }
+
+        # 4. Semantic matching
         if self.use_semantic_matching:
             match_name, score = await self._semantic_match_with_score(
                 sw_name, list(self._software_cache.keys())
