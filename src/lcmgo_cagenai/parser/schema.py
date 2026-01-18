@@ -265,6 +265,11 @@ class ParsedExperience:
     reports_to: str | None = None
     raw_text: str | None = None
     confidence: float = 0.0
+    # Suggested match fields (for unmatched roles with partial similarity)
+    suggested_role_id: UUID | None = None
+    suggested_canonical_id: str | None = None
+    semantic_similarity: float | None = None
+    match_method: str | None = None
 
 
 @dataclass
@@ -281,6 +286,11 @@ class ParsedSkill:
     last_used_year: int | None = None
     source_context: str | None = None
     confidence: float = 0.0
+    # Suggested match fields (for unmatched items with partial similarity)
+    suggested_taxonomy_id: UUID | None = None
+    suggested_canonical_id: str | None = None
+    semantic_similarity: float | None = None
+    match_method: str | None = None  # 'exact', 'substring', 'semantic', 'suggested', 'none'
 
 
 @dataclass
@@ -319,6 +329,11 @@ class ParsedCertification:
     is_current: bool = True
     raw_text: str | None = None
     confidence: float = 0.0
+    # Suggested match fields (for unmatched items with partial similarity)
+    suggested_taxonomy_id: UUID | None = None
+    suggested_canonical_id: str | None = None
+    semantic_similarity: float | None = None
+    match_method: str | None = None
 
 
 @dataclass
@@ -347,6 +362,11 @@ class ParsedSoftware:
     years_of_experience: float | None = None
     last_used_year: int | None = None
     confidence: float = 0.0
+    # Suggested match fields (for unmatched items with partial similarity)
+    suggested_taxonomy_id: UUID | None = None
+    suggested_canonical_id: str | None = None
+    semantic_similarity: float | None = None
+    match_method: str | None = None
 
 
 @dataclass

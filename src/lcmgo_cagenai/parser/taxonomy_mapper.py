@@ -154,6 +154,9 @@ class TaxonomyMapper:
         """
         Map skills to canonical taxonomy IDs.
 
+        Populates skill_id/canonical_id for confident matches,
+        or suggested_* fields for partial matches.
+
         Args:
             parsed_cv: ParsedCV to update in place
         """
@@ -166,13 +169,26 @@ class TaxonomyMapper:
         for skill in parsed_cv.skills:
             match = await self._match_skill(skill.name)
             if match:
-                skill.skill_id = match["id"]
-                skill.canonical_id = match["canonical_id"]
-                skill.name_normalized = match["name_normalized"]
+                # Always set match metadata
+                skill.match_method = match.get("match_type")
+                skill.semantic_similarity = match.get("similarity")
+
+                if match.get("id"):
+                    # Confident match - set taxonomy IDs
+                    skill.skill_id = match["id"]
+                    skill.canonical_id = match["canonical_id"]
+                    skill.name_normalized = match["name_normalized"]
+                else:
+                    # No confident match - set suggested fields
+                    skill.suggested_taxonomy_id = match.get("suggested_id")
+                    skill.suggested_canonical_id = match.get("suggested_canonical_id")
 
     async def map_certifications(self, parsed_cv: ParsedCV) -> None:
         """
         Map certifications to canonical taxonomy IDs.
+
+        Populates certification_id/canonical_id for confident matches,
+        or suggested_* fields for partial matches.
 
         Args:
             parsed_cv: ParsedCV to update in place
@@ -186,15 +202,30 @@ class TaxonomyMapper:
         for cert in parsed_cv.certifications:
             match = await self._match_certification(cert.certification_name)
             if match:
-                cert.certification_id = match["id"]
-                cert.canonical_id = match["canonical_id"]
-                cert.certification_name_normalized = match["name_normalized"]
-                if match.get("issuing_organization") and not cert.issuing_organization:
-                    cert.issuing_organization = match["issuing_organization"]
+                # Always set match metadata
+                cert.match_method = match.get("match_type")
+                cert.semantic_similarity = match.get("similarity")
+
+                if match.get("id"):
+                    # Confident match - set taxonomy IDs
+                    cert.certification_id = match["id"]
+                    cert.canonical_id = match["canonical_id"]
+                    cert.certification_name_normalized = match["name_normalized"]
+                    if match.get("issuing_organization") and not cert.issuing_organization:
+                        cert.issuing_organization = match["issuing_organization"]
+                else:
+                    # No confident match - set suggested fields
+                    cert.suggested_taxonomy_id = match.get("suggested_id")
+                    cert.suggested_canonical_id = match.get("suggested_canonical_id")
+                    if match.get("issuing_organization") and not cert.issuing_organization:
+                        cert.issuing_organization = match["issuing_organization"]
 
     async def map_roles(self, parsed_cv: ParsedCV) -> None:
         """
         Map job titles to canonical role taxonomy IDs.
+
+        Populates role_id for confident matches,
+        or suggested_* fields for partial matches.
 
         Args:
             parsed_cv: ParsedCV to update in place
@@ -208,12 +239,25 @@ class TaxonomyMapper:
         for exp in parsed_cv.experience:
             match = await self._match_role(exp.job_title)
             if match:
-                exp.role_id = match["id"]
-                exp.job_title_normalized = match["name_normalized"]
+                # Always set match metadata
+                exp.match_method = match.get("match_type")
+                exp.semantic_similarity = match.get("similarity")
+
+                if match.get("id"):
+                    # Confident match - set taxonomy IDs
+                    exp.role_id = match["id"]
+                    exp.job_title_normalized = match["name_normalized"]
+                else:
+                    # No confident match - set suggested fields
+                    exp.suggested_role_id = match.get("suggested_id")
+                    exp.suggested_canonical_id = match.get("suggested_canonical_id")
 
     async def map_software(self, parsed_cv: ParsedCV) -> None:
         """
         Map software to canonical taxonomy IDs.
+
+        Populates software_id/canonical_id for confident matches,
+        or suggested_* fields for partial matches.
 
         Args:
             parsed_cv: ParsedCV to update in place
@@ -227,10 +271,22 @@ class TaxonomyMapper:
         for sw in parsed_cv.software:
             match = await self._match_software(sw.name)
             if match:
-                sw.software_id = match["id"]
-                sw.canonical_id = match["canonical_id"]
-                if match.get("vendor") and not sw.vendor:
-                    sw.vendor = match["vendor"]
+                # Always set match metadata
+                sw.match_method = match.get("match_type")
+                sw.semantic_similarity = match.get("similarity")
+
+                if match.get("id"):
+                    # Confident match - set taxonomy IDs
+                    sw.software_id = match["id"]
+                    sw.canonical_id = match["canonical_id"]
+                    if match.get("vendor") and not sw.vendor:
+                        sw.vendor = match["vendor"]
+                else:
+                    # No confident match - set suggested fields
+                    sw.suggested_taxonomy_id = match.get("suggested_id")
+                    sw.suggested_canonical_id = match.get("suggested_canonical_id")
+                    if match.get("vendor") and not sw.vendor:
+                        sw.vendor = match["vendor"]
 
     async def _load_skill_cache(self) -> None:
         """Load skill taxonomy into memory cache."""
@@ -405,94 +461,287 @@ class TaxonomyMapper:
             logger.warning(f"Failed to load software taxonomy: {e}")
             self._software_cache = {}
 
+    # Minimum similarity for suggested matches (below threshold but worth capturing)
+    SUGGESTED_THRESHOLD = 0.60
+
     async def _match_skill(self, skill_name: str) -> dict[str, Any] | None:
         """
         Match skill name to taxonomy entry.
+
+        Returns dict with match info including:
+        - id: UUID of matched taxonomy entry (None if no confident match)
+        - canonical_id: Canonical ID string
+        - match_type: 'exact', 'substring', 'semantic', 'suggested', or None
+        - similarity: Match confidence score (1.0 for exact, 0.9 for substring, etc.)
+        - suggested_id/suggested_canonical_id: Populated for suggested matches
 
         Args:
             skill_name: Skill name from CV
 
         Returns:
-            Taxonomy entry dict or None
+            Match result dict or None
         """
         normalized = normalize_text(skill_name)
 
         # 1. Exact match
         if normalized in self._skill_cache:
-            return self._skill_cache[normalized]
+            result = self._skill_cache[normalized].copy()
+            result["match_type"] = "exact"
+            result["similarity"] = 1.0
+            return result
 
         # 2. Substring match (for compound skills)
         for cached_name, entry in self._skill_cache.items():
             if cached_name in normalized or normalized in cached_name:
-                return entry
+                result = entry.copy()
+                result["match_type"] = "substring"
+                result["similarity"] = 0.9
+                return result
 
         # 3. Semantic matching (optional)
         if self.use_semantic_matching:
-            match = await self._semantic_match(skill_name, list(self._skill_cache.keys()))
-            if match:
-                return self._skill_cache[match]
+            match_name, score = await self._semantic_match_with_score(
+                skill_name, list(self._skill_cache.keys())
+            )
 
-        return None
+            if match_name and score >= self.SEMANTIC_THRESHOLD:
+                # Confident semantic match
+                result = self._skill_cache[match_name].copy()
+                result["match_type"] = "semantic"
+                result["similarity"] = score
+                return result
+
+            if match_name and score >= self.SUGGESTED_THRESHOLD:
+                # Below threshold but worth capturing as suggestion
+                entry = self._skill_cache[match_name]
+                return {
+                    "id": None,  # No confident match
+                    "canonical_id": None,
+                    "name_normalized": None,
+                    "match_type": "suggested",
+                    "similarity": score,
+                    "suggested_id": entry["id"],
+                    "suggested_canonical_id": entry["canonical_id"],
+                }
+
+        # No match at all
+        return {
+            "id": None,
+            "canonical_id": None,
+            "name_normalized": None,
+            "match_type": "none",
+            "similarity": None,
+            "suggested_id": None,
+            "suggested_canonical_id": None,
+        }
 
     async def _match_certification(self, cert_name: str) -> dict[str, Any] | None:
         """Match certification name to taxonomy entry."""
         normalized = normalize_text(cert_name)
 
         if normalized in self._cert_cache:
-            return self._cert_cache[normalized]
+            result = self._cert_cache[normalized].copy()
+            result["match_type"] = "exact"
+            result["similarity"] = 1.0
+            return result
 
         # Substring match
         for cached_name, entry in self._cert_cache.items():
             if cached_name in normalized or normalized in cached_name:
-                return entry
+                result = entry.copy()
+                result["match_type"] = "substring"
+                result["similarity"] = 0.9
+                return result
 
         if self.use_semantic_matching:
-            match = await self._semantic_match(cert_name, list(self._cert_cache.keys()))
-            if match:
-                return self._cert_cache[match]
+            match_name, score = await self._semantic_match_with_score(
+                cert_name, list(self._cert_cache.keys())
+            )
 
-        return None
+            if match_name and score >= self.SEMANTIC_THRESHOLD:
+                result = self._cert_cache[match_name].copy()
+                result["match_type"] = "semantic"
+                result["similarity"] = score
+                return result
+
+            if match_name and score >= self.SUGGESTED_THRESHOLD:
+                entry = self._cert_cache[match_name]
+                return {
+                    "id": None,
+                    "canonical_id": None,
+                    "name_normalized": None,
+                    "issuing_organization": entry.get("issuing_organization"),
+                    "match_type": "suggested",
+                    "similarity": score,
+                    "suggested_id": entry["id"],
+                    "suggested_canonical_id": entry["canonical_id"],
+                }
+
+        return {
+            "id": None,
+            "canonical_id": None,
+            "name_normalized": None,
+            "issuing_organization": None,
+            "match_type": "none",
+            "similarity": None,
+            "suggested_id": None,
+            "suggested_canonical_id": None,
+        }
 
     async def _match_role(self, job_title: str) -> dict[str, Any] | None:
         """Match job title to role taxonomy entry."""
         normalized = normalize_text(job_title)
 
         if normalized in self._role_cache:
-            return self._role_cache[normalized]
+            result = self._role_cache[normalized].copy()
+            result["match_type"] = "exact"
+            result["similarity"] = 1.0
+            return result
 
         # Substring match
         for cached_name, entry in self._role_cache.items():
             if cached_name in normalized or normalized in cached_name:
-                return entry
+                result = entry.copy()
+                result["match_type"] = "substring"
+                result["similarity"] = 0.9
+                return result
 
         if self.use_semantic_matching:
-            match = await self._semantic_match(job_title, list(self._role_cache.keys()))
-            if match:
-                return self._role_cache[match]
+            match_name, score = await self._semantic_match_with_score(
+                job_title, list(self._role_cache.keys())
+            )
 
-        return None
+            if match_name and score >= self.SEMANTIC_THRESHOLD:
+                result = self._role_cache[match_name].copy()
+                result["match_type"] = "semantic"
+                result["similarity"] = score
+                return result
+
+            if match_name and score >= self.SUGGESTED_THRESHOLD:
+                entry = self._role_cache[match_name]
+                return {
+                    "id": None,
+                    "canonical_id": None,
+                    "name_normalized": None,
+                    "match_type": "suggested",
+                    "similarity": score,
+                    "suggested_id": entry["id"],
+                    "suggested_canonical_id": entry["canonical_id"],
+                }
+
+        return {
+            "id": None,
+            "canonical_id": None,
+            "name_normalized": None,
+            "match_type": "none",
+            "similarity": None,
+            "suggested_id": None,
+            "suggested_canonical_id": None,
+        }
 
     async def _match_software(self, sw_name: str) -> dict[str, Any] | None:
         """Match software name to taxonomy entry."""
         normalized = normalize_text(sw_name)
 
         if normalized in self._software_cache:
-            return self._software_cache[normalized]
+            result = self._software_cache[normalized].copy()
+            result["match_type"] = "exact"
+            result["similarity"] = 1.0
+            return result
 
         # Substring match
         for cached_name, entry in self._software_cache.items():
             if cached_name in normalized or normalized in cached_name:
-                return entry
+                result = entry.copy()
+                result["match_type"] = "substring"
+                result["similarity"] = 0.9
+                return result
 
         if self.use_semantic_matching:
-            match = await self._semantic_match(sw_name, list(self._software_cache.keys()))
-            if match:
-                return self._software_cache[match]
+            match_name, score = await self._semantic_match_with_score(
+                sw_name, list(self._software_cache.keys())
+            )
 
-        return None
+            if match_name and score >= self.SEMANTIC_THRESHOLD:
+                result = self._software_cache[match_name].copy()
+                result["match_type"] = "semantic"
+                result["similarity"] = score
+                return result
+
+            if match_name and score >= self.SUGGESTED_THRESHOLD:
+                entry = self._software_cache[match_name]
+                return {
+                    "id": None,
+                    "canonical_id": None,
+                    "name_normalized": None,
+                    "vendor": entry.get("vendor"),
+                    "match_type": "suggested",
+                    "similarity": score,
+                    "suggested_id": entry["id"],
+                    "suggested_canonical_id": entry["canonical_id"],
+                }
+
+        return {
+            "id": None,
+            "canonical_id": None,
+            "name_normalized": None,
+            "vendor": None,
+            "match_type": "none",
+            "similarity": None,
+            "suggested_id": None,
+            "suggested_canonical_id": None,
+        }
 
     # Cohere Embed v4 batch size limit
     COHERE_BATCH_SIZE = 96
+
+    async def _semantic_match_with_score(
+        self,
+        query: str,
+        candidates: list[str],
+    ) -> tuple[str | None, float]:
+        """
+        Find best semantic match using embeddings, returning both match and score.
+
+        Args:
+            query: Query string to match
+            candidates: List of candidate strings
+
+        Returns:
+            Tuple of (best matching candidate or None, similarity score)
+        """
+        if not candidates:
+            return None, 0.0
+
+        try:
+            # Generate query embedding (single request)
+            query_embedding = await self.provider.embed_query(query)
+
+            # Generate candidate embeddings in batches (Cohere v4 max is 96)
+            all_candidate_embeddings = []
+            for i in range(0, len(candidates), self.COHERE_BATCH_SIZE):
+                batch = candidates[i:i + self.COHERE_BATCH_SIZE]
+                batch_response = await self.provider.embed(batch)
+                all_candidate_embeddings.extend(batch_response.embeddings)
+
+            # Calculate cosine similarities against ALL candidates
+            best_match = None
+            best_score = 0.0
+
+            for i, candidate_embedding in enumerate(all_candidate_embeddings):
+                score = self._cosine_similarity(query_embedding, candidate_embedding)
+                if score > best_score:
+                    best_score = score
+                    best_match = candidates[i]
+
+            if best_match:
+                logger.debug(f"Semantic match: '{query}' -> '{best_match}' (score={best_score:.3f})")
+
+            return best_match, best_score
+
+        except Exception as e:
+            logger.warning(f"Semantic matching failed: {e}")
+            return None, 0.0
 
     async def _semantic_match(
         self,

@@ -135,11 +135,21 @@ class DatabaseWriter:
             # Insert related records
             self._insert_education(cursor, candidate_id, parsed_cv.education)
             self._insert_experience(cursor, candidate_id, parsed_cv.experience)
-            self._insert_skills(cursor, candidate_id, parsed_cv.skills)
+
+            # Insert skills, software, certifications - capturing unmatched items
+            skill_stats = self._insert_skills(cursor, candidate_id, parsed_cv.skills, correlation_id)
             self._insert_languages(cursor, candidate_id, parsed_cv.languages)
-            self._insert_certifications(cursor, candidate_id, parsed_cv.certifications)
+            cert_stats = self._insert_certifications(cursor, candidate_id, parsed_cv.certifications, correlation_id)
             self._insert_driving_licenses(cursor, candidate_id, parsed_cv.driving_licenses)
-            self._insert_software(cursor, candidate_id, parsed_cv.software)
+            software_stats = self._insert_software(cursor, candidate_id, parsed_cv.software, correlation_id)
+
+            # Log unmatched item stats
+            total_unmatched = skill_stats["unmatched"] + cert_stats["unmatched"] + software_stats["unmatched"]
+            if total_unmatched > 0:
+                logger.info(
+                    f"Captured {total_unmatched} unmatched taxonomy items: "
+                    f"skills={skill_stats['unmatched']}, certs={cert_stats['unmatched']}, software={software_stats['unmatched']}"
+                )
 
             # Insert GDPR consent record (basic processing consent)
             self._insert_consent(cursor, candidate_id)
@@ -411,12 +421,123 @@ class DatabaseWriter:
                 ),
             )
 
-    def _insert_skills(self, cursor: Any, candidate_id: UUID, skills: list) -> None:
-        """Insert skill records."""
+    def _insert_unmatched_item(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        item_type: str,
+        raw_value: str,
+        normalized_value: str,
+        source_context: str | None = None,
+        source_section: str | None = None,
+        suggested_taxonomy_id: UUID | None = None,
+        suggested_canonical_id: str | None = None,
+        semantic_similarity: float | None = None,
+        match_method: str | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        """
+        Insert unmatched taxonomy item for later review.
+
+        Uses upsert to increment occurrence count if same item exists.
+
+        Args:
+            candidate_id: Candidate UUID
+            item_type: 'skill', 'software', 'certification', 'role', etc.
+            raw_value: Original value from CV
+            normalized_value: Normalized value for matching
+            source_context: Surrounding text for context
+            source_section: Section of CV where found
+            suggested_taxonomy_id: Best match taxonomy ID (if any)
+            suggested_canonical_id: Best match canonical ID (if any)
+            semantic_similarity: Match similarity score
+            match_method: How match was determined
+            correlation_id: Processing correlation ID
+        """
+        try:
+            # Use the upsert function if available, otherwise direct insert
+            cursor.execute(
+                """
+                SELECT upsert_unmatched_item(
+                    %s::uuid, %s::unmatched_item_type, %s, %s, %s, %s,
+                    %s::uuid, %s, %s::decimal(5,4), %s, %s
+                )
+                """,
+                (
+                    str(candidate_id),
+                    item_type,
+                    raw_value,
+                    normalized_value,
+                    source_context,
+                    source_section,
+                    str(suggested_taxonomy_id) if suggested_taxonomy_id else None,
+                    suggested_canonical_id,
+                    semantic_similarity,
+                    match_method or 'none',
+                    correlation_id,
+                ),
+            )
+        except Exception as e:
+            # Fallback to direct insert if upsert function doesn't exist
+            logger.debug(f"upsert_unmatched_item failed, using direct insert: {e}")
+            cursor.execute(
+                """
+                INSERT INTO unmatched_taxonomy_items (
+                    candidate_id, correlation_id, item_type,
+                    raw_value, normalized_value, source_context, source_section,
+                    suggested_taxonomy_id, suggested_canonical_id, semantic_similarity,
+                    match_method
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    str(candidate_id),
+                    correlation_id,
+                    item_type,
+                    raw_value,
+                    normalized_value,
+                    source_context,
+                    source_section,
+                    str(suggested_taxonomy_id) if suggested_taxonomy_id else None,
+                    suggested_canonical_id,
+                    semantic_similarity,
+                    match_method or 'none',
+                ),
+            )
+
+    def _insert_skills(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        skills: list,
+        correlation_id: str | None = None,
+    ) -> dict:
+        """
+        Insert skill records, capturing unmatched items.
+
+        Returns:
+            Stats dict with 'inserted' and 'unmatched' counts
+        """
+        stats = {"inserted": 0, "unmatched": 0}
+
         for skill in skills:
             if not skill.skill_id:
-                # Skip skills without taxonomy mapping
-                # In production, might insert into a separate unmatched_skills table
+                # Capture unmatched skill instead of silently skipping
+                self._insert_unmatched_item(
+                    cursor=cursor,
+                    candidate_id=candidate_id,
+                    item_type="skill",
+                    raw_value=skill.name,
+                    normalized_value=normalize_text(skill.name),
+                    source_context=skill.source_context,
+                    source_section="skills",
+                    suggested_taxonomy_id=skill.suggested_taxonomy_id,
+                    suggested_canonical_id=skill.suggested_canonical_id,
+                    semantic_similarity=skill.semantic_similarity,
+                    match_method=skill.match_method,
+                    correlation_id=correlation_id,
+                )
+                stats["unmatched"] += 1
                 continue
 
             cursor.execute(
@@ -443,6 +564,9 @@ class DatabaseWriter:
                     skill.confidence,
                 ),
             )
+            stats["inserted"] += 1
+
+        return stats
 
     def _insert_languages(self, cursor: Any, candidate_id: UUID, languages: list) -> None:
         """Insert language records."""
@@ -478,9 +602,27 @@ class DatabaseWriter:
                 ),
             )
 
-    def _insert_certifications(self, cursor: Any, candidate_id: UUID, certifications: list) -> None:
-        """Insert certification records."""
+    def _insert_certifications(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        certifications: list,
+        correlation_id: str | None = None,
+    ) -> dict:
+        """
+        Insert certification records, capturing unmatched items.
+
+        Certifications are always inserted (even unmatched ones), but
+        unmatched ones are also captured in unmatched_taxonomy_items
+        for later review and taxonomy expansion.
+
+        Returns:
+            Stats dict with 'inserted' and 'unmatched' counts
+        """
+        stats = {"inserted": 0, "unmatched": 0}
+
         for cert in certifications:
+            # Always insert the certification record
             cursor.execute(
                 """
                 INSERT INTO candidate_certifications (
@@ -506,6 +648,27 @@ class DatabaseWriter:
                     cert.confidence,
                 ),
             )
+            stats["inserted"] += 1
+
+            # Also capture in unmatched table if no taxonomy match
+            if not cert.certification_id:
+                self._insert_unmatched_item(
+                    cursor=cursor,
+                    candidate_id=candidate_id,
+                    item_type="certification",
+                    raw_value=cert.certification_name,
+                    normalized_value=normalize_text(cert.certification_name) if cert.certification_name else "",
+                    source_context=cert.raw_text,
+                    source_section="certifications",
+                    suggested_taxonomy_id=cert.suggested_taxonomy_id,
+                    suggested_canonical_id=cert.suggested_canonical_id,
+                    semantic_similarity=cert.semantic_similarity,
+                    match_method=cert.match_method,
+                    correlation_id=correlation_id,
+                )
+                stats["unmatched"] += 1
+
+        return stats
 
     def _insert_driving_licenses(self, cursor: Any, candidate_id: UUID, licenses: list) -> None:
         """Insert driving license records."""
@@ -532,10 +695,39 @@ class DatabaseWriter:
                 ),
             )
 
-    def _insert_software(self, cursor: Any, candidate_id: UUID, software: list) -> None:
-        """Insert software records."""
+    def _insert_software(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        software: list,
+        correlation_id: str | None = None,
+    ) -> dict:
+        """
+        Insert software records, capturing unmatched items.
+
+        Returns:
+            Stats dict with 'inserted' and 'unmatched' counts
+        """
+        stats = {"inserted": 0, "unmatched": 0}
+
         for sw in software:
             if not sw.software_id:
+                # Capture unmatched software instead of silently skipping
+                self._insert_unmatched_item(
+                    cursor=cursor,
+                    candidate_id=candidate_id,
+                    item_type="software",
+                    raw_value=sw.name,
+                    normalized_value=normalize_text(sw.name),
+                    source_context=None,
+                    source_section="software",
+                    suggested_taxonomy_id=sw.suggested_taxonomy_id,
+                    suggested_canonical_id=sw.suggested_canonical_id,
+                    semantic_similarity=sw.semantic_similarity,
+                    match_method=sw.match_method,
+                    correlation_id=correlation_id,
+                )
+                stats["unmatched"] += 1
                 continue
 
             cursor.execute(
@@ -560,6 +752,9 @@ class DatabaseWriter:
                     sw.confidence,
                 ),
             )
+            stats["inserted"] += 1
+
+        return stats
 
     def _insert_consent(self, cursor: Any, candidate_id: UUID) -> None:
         """Insert basic GDPR consent record."""
