@@ -111,8 +111,8 @@ class DatabaseWriter:
         cursor = conn.cursor()
 
         try:
-            # Start transaction
-            conn.begin()
+            # pg8000 uses autocommit=False by default, so transactions are implicit
+            # No explicit begin() needed - transaction starts with first statement
 
             # Check for duplicates
             existing_id = None

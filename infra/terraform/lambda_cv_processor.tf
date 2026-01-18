@@ -13,29 +13,12 @@
 resource "null_resource" "cv_processor_layer_build" {
   triggers = {
     requirements_hash = filemd5("${path.module}/../../lambda/cv_processor/requirements.txt")
+    dockerfile_hash   = filemd5("${path.module}/../../lambda/cv_processor/Dockerfile.layer")
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
-      $layerDir = "${path.module}/../../lambda/cv_processor/layer"
-      $pythonDir = "$layerDir/python"
-
-      # Clean up previous build
-      if (Test-Path $layerDir) { Remove-Item -Recurse -Force $layerDir }
-      New-Item -ItemType Directory -Force -Path $pythonDir | Out-Null
-
-      # Install dependencies
-      pip install python-docx pdfplumber Pillow -t $pythonDir --quiet --no-cache-dir
-
-      # Create zip
-      $zipPath = "${path.module}/../../lambda/cv_processor/cv_processor_layer.zip"
-      if (Test-Path $zipPath) { Remove-Item $zipPath }
-      Compress-Archive -Path "$layerDir\*" -DestinationPath $zipPath -Force
-
-      Write-Host "Layer built: $zipPath"
-    EOT
-
-    interpreter = ["powershell", "-Command"]
+    command     = "powershell -ExecutionPolicy Bypass -File build-layer.ps1"
+    working_dir = "${path.module}/../../lambda/cv_processor"
   }
 }
 
@@ -76,6 +59,9 @@ resource "null_resource" "lcmgo_package_layer_build" {
 
       # Copy source package
       Copy-Item -Recurse "${path.module}/../../src/lcmgo_cagenai" "$pythonDir/"
+
+      # Remove __pycache__ directories (bytecode may be stale or wrong Python version)
+      Get-ChildItem -Path "$pythonDir" -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 
       # Create zip
       $zipPath = "${path.module}/../../lambda/cv_processor/lcmgo_package_layer.zip"
@@ -310,9 +296,14 @@ resource "aws_iam_role_policy" "cv_processor_bedrock" {
           "bedrock:InvokeModel"
         ]
         Resource = [
-          "arn:aws:bedrock:eu-north-1::foundation-model/eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
-          "arn:aws:bedrock:eu-north-1::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0",
-          "arn:aws:bedrock:eu-north-1::foundation-model/eu.cohere.embed-v4:0"
+          # EU cross-region inference profiles route to various EU regions
+          # Use wildcard for region since eu. profiles route to eu-west-3, eu-central-1, etc.
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/eu.anthropic.claude-*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/eu.cohere.embed-*",
+          # Foundation models in all EU regions (for cross-region inference)
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-*",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-*",
+          "arn:aws:bedrock:*::foundation-model/cohere.embed-*"
         ]
       }
     ]

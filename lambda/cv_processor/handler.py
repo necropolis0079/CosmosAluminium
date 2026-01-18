@@ -360,6 +360,8 @@ def update_state(
         status: Current processing status
         extra_data: Additional data to store
     """
+    from decimal import Decimal
+
     table = dynamodb.Table(STATE_TABLE)
 
     now = datetime.now(timezone.utc).isoformat()
@@ -386,6 +388,9 @@ def update_state(
                 attr_name = f"#attr_{key}"
                 expr_names[attr_name] = key
                 update_expr += f", {attr_name} = :{key}"
+                # Convert floats to Decimal for DynamoDB compatibility
+                if isinstance(value, float):
+                    value = Decimal(str(value))
                 expr_values[f":{key}"] = value
 
     try:

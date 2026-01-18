@@ -154,6 +154,7 @@ async def process_cv(
     # 3. Parse with Claude
     logger.info(f"Parsing CV text ({len(cv_text)} chars)")
     parser = CVParser(region=AWS_REGION)
+
     parsed_cv = await parser.parse(cv_text, correlation_id)
 
     # Log parsing summary
@@ -291,25 +292,37 @@ def update_state(
         status: Current processing status
         extra_data: Additional data to store
     """
+    from decimal import Decimal
+
     table = dynamodb.Table(STATE_TABLE)
 
-    update_expr = "SET #status = :status, updated_at = :updated_at"
-    expr_names = {"#status": "status"}
+    update_expr = "SET #status = :status, #updated_at = :updated_at, #correlation_id = :correlation_id"
+    expr_names = {
+        "#status": "status",
+        "#updated_at": "updated_at",
+        "#correlation_id": "correlation_id",
+    }
     expr_values = {
         ":status": status,
         ":updated_at": datetime.now(timezone.utc).isoformat(),
+        ":correlation_id": correlation_id,
     }
 
     if extra_data:
         for key, value in extra_data.items():
-            if key not in ("correlation_id", "status", "updated_at"):
-                safe_key = key.replace("-", "_")
-                update_expr += f", {safe_key} = :{safe_key}"
-                expr_values[f":{safe_key}"] = value
+            if key not in ("cv_id", "correlation_id", "status", "updated_at"):
+                # Use expression attribute names to avoid reserved keyword issues
+                attr_name = f"#attr_{key.replace('-', '_')}"
+                expr_names[attr_name] = key
+                update_expr += f", {attr_name} = :{key.replace('-', '_')}"
+                # Convert floats to Decimal for DynamoDB compatibility
+                if isinstance(value, float):
+                    value = Decimal(str(value))
+                expr_values[f":{key.replace('-', '_')}"] = value
 
     try:
         table.update_item(
-            Key={"correlation_id": correlation_id},
+            Key={"cv_id": correlation_id},  # Use correlation_id as cv_id (primary key)
             UpdateExpression=update_expr,
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_values,

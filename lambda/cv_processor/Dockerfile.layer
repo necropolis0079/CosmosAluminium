@@ -1,0 +1,35 @@
+# =============================================================================
+# CV Processor Lambda Layer Builder
+# =============================================================================
+# Builds the cv_processor layer on Amazon Linux 2023 (Lambda runtime compatible)
+# Usage:
+#   docker build -f Dockerfile.layer -t cv-processor-layer-builder .
+#   docker run --rm -v "$(pwd):/output" cv-processor-layer-builder
+# =============================================================================
+
+FROM public.ecr.aws/lambda/python:3.11
+
+# Install build dependencies (Amazon Linux 2 uses yum)
+RUN yum install -y zip
+
+# Set working directory
+WORKDIR /build
+
+# Create layer directory structure
+RUN mkdir -p /build/python
+
+# Install dependencies into layer
+# Note: Using --only-binary=:all: where possible to get pre-compiled wheels
+RUN pip install \
+    python-docx>=0.8.11 \
+    pdfplumber>=0.10.3 \
+    Pillow>=10.0.0 \
+    -t /build/python \
+    --no-cache-dir
+
+# Create the zip file
+RUN cd /build && zip -r9 cv_processor_layer.zip python
+
+# Override Lambda entrypoint for layer extraction
+ENTRYPOINT ["/bin/sh", "-c"]
+CMD ["cp /build/cv_processor_layer.zip /output/cv_processor_layer.zip"]

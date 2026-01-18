@@ -111,9 +111,14 @@ resource "aws_iam_role_policy" "cv_parser_bedrock" {
           "bedrock:InvokeModel"
         ]
         Resource = [
-          "arn:aws:bedrock:eu-north-1::foundation-model/eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
-          "arn:aws:bedrock:eu-north-1::foundation-model/eu.anthropic.claude-opus-4-5-20251101-v1:0",
-          "arn:aws:bedrock:eu-north-1::foundation-model/eu.cohere.embed-v4:0"
+          # EU cross-region inference profiles route to various EU regions
+          # Use wildcard for region since eu. profiles route to eu-west-3, eu-central-1, etc.
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/eu.anthropic.claude-*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/eu.cohere.embed-*",
+          # Foundation models in all EU regions (for cross-region inference)
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-*",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-opus-4-5-*",
+          "arn:aws:bedrock:*::foundation-model/cohere.embed-*"
         ]
       }
     ]
