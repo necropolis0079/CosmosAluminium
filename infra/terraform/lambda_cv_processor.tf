@@ -41,11 +41,36 @@ resource "aws_lambda_layer_version" "cv_processor" {
 
 resource "null_resource" "lcmgo_package_layer_build" {
   triggers = {
-    ocr_hash    = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/__init__.py")
-    llm_hash    = filemd5("${path.module}/../../src/lcmgo_cagenai/llm/provider.py")
-    search_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/search/__init__.py")
-    parser_hash = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/__init__.py")
-    query_hash  = filemd5("${path.module}/../../src/lcmgo_cagenai/query/__init__.py")
+    # OCR module
+    ocr_init       = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/__init__.py")
+    ocr_extractor  = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/extractor.py")
+    ocr_docx       = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/docx_extractor.py")
+    ocr_pdf        = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/pdf_extractor.py")
+    ocr_triple     = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/triple_ocr.py")
+
+    # LLM module
+    llm_init     = filemd5("${path.module}/../../src/lcmgo_cagenai/llm/__init__.py")
+    llm_provider = filemd5("${path.module}/../../src/lcmgo_cagenai/llm/provider.py")
+
+    # Search module
+    search_init     = filemd5("${path.module}/../../src/lcmgo_cagenai/search/__init__.py")
+    search_client   = filemd5("${path.module}/../../src/lcmgo_cagenai/search/client.py")
+    search_mappings = filemd5("${path.module}/../../src/lcmgo_cagenai/search/mappings.py")
+
+    # Parser module
+    parser_init           = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/__init__.py")
+    parser_schema         = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/schema.py")
+    parser_cv_parser      = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/cv_parser.py")
+    parser_taxonomy       = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/taxonomy_mapper.py")
+    parser_db_writer      = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/db_writer.py")
+    parser_search_indexer = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/search_indexer.py")
+
+    # Query module
+    query_init       = filemd5("${path.module}/../../src/lcmgo_cagenai/query/__init__.py")
+    query_schema     = filemd5("${path.module}/../../src/lcmgo_cagenai/query/schema.py")
+    query_translator = filemd5("${path.module}/../../src/lcmgo_cagenai/query/query_translator.py")
+    query_sql_gen    = filemd5("${path.module}/../../src/lcmgo_cagenai/query/sql_generator.py")
+    query_router     = filemd5("${path.module}/../../src/lcmgo_cagenai/query/query_router.py")
   }
 
   provisioner "local-exec" {

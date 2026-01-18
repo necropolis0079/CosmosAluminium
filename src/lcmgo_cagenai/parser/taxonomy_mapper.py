@@ -491,6 +491,9 @@ class TaxonomyMapper:
 
         return None
 
+    # Cohere Embed v4 batch size limit
+    COHERE_BATCH_SIZE = 96
+
     async def _semantic_match(
         self,
         query: str,
@@ -499,6 +502,9 @@ class TaxonomyMapper:
     ) -> str | None:
         """
         Find best semantic match using embeddings.
+
+        Handles Cohere Embed v4's batch size limit of 96 items by
+        processing candidates in batches and comparing against all.
 
         Args:
             query: Query string to match
@@ -515,17 +521,26 @@ class TaxonomyMapper:
             threshold = self.SEMANTIC_THRESHOLD
 
         try:
-            # Generate query embedding
+            # Generate query embedding (single request)
             query_embedding = await self.provider.embed_query(query)
 
-            # Generate candidate embeddings (batch)
-            candidate_response = await self.provider.embed(candidates[:96])  # Cohere v4 max is 96
+            # Generate candidate embeddings in batches (Cohere v4 max is 96)
+            all_candidate_embeddings = []
+            for i in range(0, len(candidates), self.COHERE_BATCH_SIZE):
+                batch = candidates[i:i + self.COHERE_BATCH_SIZE]
+                batch_response = await self.provider.embed(batch)
+                all_candidate_embeddings.extend(batch_response.embeddings)
 
-            # Calculate cosine similarities
+            # Log if we needed multiple batches
+            num_batches = (len(candidates) + self.COHERE_BATCH_SIZE - 1) // self.COHERE_BATCH_SIZE
+            if num_batches > 1:
+                logger.debug(f"Semantic match: processed {len(candidates)} candidates in {num_batches} batches")
+
+            # Calculate cosine similarities against ALL candidates
             best_match = None
             best_score = 0.0
 
-            for i, candidate_embedding in enumerate(candidate_response.embeddings):
+            for i, candidate_embedding in enumerate(all_candidate_embeddings):
                 score = self._cosine_similarity(query_embedding, candidate_embedding)
                 if score > best_score and score >= threshold:
                     best_score = score
