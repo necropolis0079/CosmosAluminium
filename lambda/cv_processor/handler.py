@@ -23,7 +23,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote_plus
+from urllib.parse import quote, unquote_plus
 
 import boto3
 
@@ -150,7 +150,7 @@ def process_s3_record(record: dict) -> dict:
             ContentType="text/plain; charset=utf-8",
             Metadata={
                 "correlation_id": correlation_id,
-                "source_key": key,
+                "source_key": quote(key, safe=""),  # URL-encode for ASCII safety
                 "extraction_method": result["method"],
                 "confidence": str(result["confidence"]),
             },
