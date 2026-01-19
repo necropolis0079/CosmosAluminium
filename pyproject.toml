@@ -39,6 +39,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+lcmgo_cagenai = ["prompts/**/*.txt"]
+
 [tool.black]
 line-length = 100
 target-version = ["py311"]

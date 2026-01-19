@@ -19,7 +19,7 @@ from uuid import UUID
 import boto3
 import pg8000
 
-from .schema import CVCompletenessAudit, ParsedCV, ParsedUnmatchedData
+from .schema import CVCompletenessAudit, ParsedCV, ParsedTraining, ParsedUnmatchedData
 from .taxonomy_mapper import normalize_text
 
 logger = logging.getLogger(__name__)
@@ -259,6 +259,7 @@ class DatabaseWriter:
             cert_stats = self._insert_certifications(cursor, candidate_id, parsed_cv.certifications, correlation_id)
             self._insert_driving_licenses(cursor, candidate_id, parsed_cv.driving_licenses)
             software_stats = self._insert_software(cursor, candidate_id, parsed_cv.software, correlation_id)
+            self._insert_training(cursor, candidate_id, parsed_cv.training)
 
             # Log unmatched item stats
             total_unmatched = skill_stats["unmatched"] + cert_stats["unmatched"] + software_stats["unmatched"]
@@ -930,6 +931,76 @@ class DatabaseWriter:
             stats["inserted"] += 1
 
         return stats
+
+    def _insert_training(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        training_list: list[ParsedTraining],
+    ) -> int:
+        """
+        Insert training/seminar records for a candidate.
+
+        Args:
+            cursor: Database cursor
+            candidate_id: Candidate UUID
+            training_list: List of ParsedTraining objects
+
+        Returns:
+            Number of training records inserted
+        """
+        if not training_list:
+            return 0
+
+        count = 0
+        for training in training_list:
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO candidate_training (
+                        candidate_id,
+                        training_name,
+                        provider_name,
+                        provider_type,
+                        training_type,
+                        category,
+                        duration_hours,
+                        duration_days,
+                        completion_date,
+                        start_date,
+                        description,
+                        skills_gained,
+                        certificate_received,
+                        raw_text,
+                        confidence
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        str(candidate_id),
+                        training.training_name,
+                        training.provider_name,
+                        training.provider_type,
+                        training.training_type,
+                        training.category,
+                        training.duration_hours,
+                        training.duration_days,
+                        training.completion_date,
+                        training.start_date,
+                        training.description,
+                        training.skills_gained if training.skills_gained else None,
+                        training.certificate_received,
+                        training.raw_text,
+                        training.confidence,
+                    ),
+                )
+                count += 1
+            except Exception as e:
+                logger.warning(f"Failed to insert training '{training.training_name}': {e}")
+
+        if count > 0:
+            logger.info(f"Inserted {count} training/seminar records for candidate {candidate_id}")
+
+        return count
 
     def _insert_consent(self, cursor: Any, candidate_id: UUID) -> None:
         """Insert basic GDPR consent record."""

@@ -150,7 +150,8 @@ class BedrockProvider(LLMProvider):
         model_id = EU_MODEL_IDS[request.model]
         start = time.time()
 
-        logger.debug(f"Bedrock completion request: model={request.model.value}")
+        logger.info(f"Bedrock completion: model={request.model.value}, model_id={model_id}")
+        logger.info(f"Bedrock request: prompt_len={len(request.prompt)}, max_tokens={request.max_tokens}")
 
         # Build messages
         messages = [{"role": "user", "content": request.prompt}]
@@ -169,12 +170,14 @@ class BedrockProvider(LLMProvider):
             body["system"] = request.system
 
         # Invoke model
+        logger.info(f"Calling Bedrock invoke_model...")
         response = self.client.invoke_model(
             modelId=model_id,
             body=json.dumps(body),
             contentType="application/json",
             accept="application/json",
         )
+        logger.info(f"Bedrock invoke_model returned")
 
         response_body = json.loads(response["body"].read())
         latency_ms = (time.time() - start) * 1000

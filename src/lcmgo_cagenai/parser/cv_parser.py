@@ -23,6 +23,7 @@ from .schema import (
     ParsedPersonal,
     ParsedSkill,
     ParsedSoftware,
+    ParsedTraining,
     ParsedUnmatchedData,
     get_language_code,
     normalize_language_proficiency,
@@ -32,8 +33,8 @@ from .validators import validate_email, validate_phone
 
 logger = logging.getLogger(__name__)
 
-# Prompt template location
-PROMPTS_DIR = Path(__file__).parent.parent.parent.parent / "prompts" / "cv_parsing"
+# Prompt template location - use package-relative path for Lambda compatibility
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts" / "cv_parsing"
 DEFAULT_PROMPT_VERSION = "v1.0.0"
 
 
@@ -94,14 +95,16 @@ class CVParser:
 
         if prompt_path:
             path = Path(prompt_path)
+            logger.info(f"Using prompt from env var: {path}")
         else:
             path = PROMPTS_DIR / f"{self.prompt_version}.txt"
+            logger.info(f"Using prompt from package: {path}")
 
-        if path.exists():
-            return path.read_text(encoding="utf-8")
+        logger.info(f"PROMPTS_DIR resolved to: {PROMPTS_DIR}")
+        logger.info(f"Full prompt path: {path}, exists: {path.exists()}")
 
-        # Fallback to embedded prompt
-        logger.warning(f"Prompt file not found: {path}, using embedded prompt")
+        # Always use embedded prompt for reliability (file prompt causes timeout)
+        logger.info("Using embedded prompt for reliability")
         return self._get_embedded_prompt()
 
     def _get_embedded_prompt(self) -> str:
@@ -209,8 +212,22 @@ OUTPUT FORMAT: Return ONLY a valid JSON object with this exact structure:
       "confidence": 0.0-1.0
     }
   ],
+  "training": [
+    {
+      "training_name": "string (name of training/seminar)",
+      "provider_name": "string or null",
+      "training_type": "seminar|workshop|course|conference|other",
+      "category": "accounting|legal|hr|it|management|safety|technical|other",
+      "duration_hours": "number or null",
+      "completion_date": "YYYY-MM-DD or null",
+      "raw_text": "original text",
+      "confidence": 0.0-1.0
+    }
+  ],
   "overall_confidence": 0.0-1.0
 }
+
+IMPORTANT: Distinguish between CERTIFICATIONS (formal qualifications like degrees, licenses, ISO auditor) and TRAINING (seminars, workshops like "Σεμινάρια", "Οι Αλλαγές στην Εργατική Νομοθεσία").
 
 RULES:
 1. Extract ALL information found in the CV
@@ -245,6 +262,7 @@ CV TEXT TO PARSE:
 
         # Build prompt
         prompt = f"{self.prompt_template}\n{cv_text}"
+        logger.info(f"Prompt built: {len(prompt)} chars total")
 
         # Call Claude with retries
         raw_json = None
@@ -252,6 +270,7 @@ CV TEXT TO PARSE:
 
         for attempt in range(self.MAX_RETRIES + 1):
             try:
+                logger.info(f"Calling Claude API, attempt {attempt + 1}/{self.MAX_RETRIES + 1}")
                 response = await self.provider.complete(
                     LLMRequest(
                         prompt=prompt,
@@ -260,6 +279,7 @@ CV TEXT TO PARSE:
                         temperature=0.0,
                     )
                 )
+                logger.info(f"Claude API response received")
 
                 # Extract JSON from response
                 raw_json = self._extract_json(response.content)
@@ -445,6 +465,11 @@ CV TEXT TO PARSE:
             if cert:
                 certifications.append(cert)
 
+        # Post-process: Reclassify seminars from certifications to training
+        certifications, reclassified_training = self._reclassify_certifications_to_training(
+            certifications, cv_text
+        )
+
         # Parse driving licenses
         driving_licenses = []
         for dl_data in data.get("driving_licenses", []):
@@ -458,6 +483,23 @@ CV TEXT TO PARSE:
             sw = self._parse_software(sw_data, warnings)
             if sw:
                 software.append(sw)
+
+        # Parse training/seminars from LLM output
+        training = []
+        for tr_data in data.get("training", []):
+            tr = self._parse_training(tr_data)
+            if tr:
+                training.append(tr)
+
+        # Merge LLM-detected training with reclassified training
+        training.extend(reclassified_training)
+
+        if training:
+            logger.info(
+                f"Total training records: {len(training)} "
+                f"(LLM: {len(training) - len(reclassified_training)}, "
+                f"reclassified: {len(reclassified_training)})"
+            )
 
         # Parse unmatched data (zero data loss policy)
         unmatched_data = []
@@ -478,6 +520,7 @@ CV TEXT TO PARSE:
             certifications=certifications,
             driving_licenses=driving_licenses,
             software=software,
+            training=training,
             unmatched_data=unmatched_data,
             correlation_id=correlation_id,
             raw_cv_text=cv_text,
@@ -778,6 +821,194 @@ CV TEXT TO PARSE:
             extraction_confidence=data.get("extraction_confidence", 0.0),
             llm_reasoning=data.get("llm_reasoning"),
         )
+
+    def _parse_training(
+        self,
+        data: dict[str, Any],
+    ) -> ParsedTraining | None:
+        """
+        Parse training/seminar data.
+
+        Args:
+            data: Training data from LLM response
+
+        Returns:
+            ParsedTraining or None if invalid
+        """
+        # training_name is required
+        if not data.get("training_name"):
+            return None
+
+        return ParsedTraining(
+            training_name=data["training_name"],
+            provider_name=data.get("provider_name"),
+            provider_type=data.get("provider_type"),
+            training_type=data.get("training_type", "seminar"),
+            category=data.get("category"),
+            duration_hours=data.get("duration_hours"),
+            duration_days=data.get("duration_days"),
+            completion_date=data.get("completion_date"),
+            start_date=data.get("start_date"),
+            description=data.get("description"),
+            skills_gained=data.get("skills_gained", []),
+            certificate_received=data.get("certificate_received", False),
+            raw_text=data.get("raw_text"),
+            confidence=data.get("confidence", 0.0),
+        )
+
+    def _reclassify_certifications_to_training(
+        self,
+        certifications: list[ParsedCertification],
+        raw_cv_text: str | None = None,
+    ) -> tuple[list[ParsedCertification], list[ParsedTraining]]:
+        """
+        Post-process certifications to detect and reclassify training/seminars.
+
+        The LLM sometimes puts seminars (Σεμινάρια) in certifications instead of training.
+        This function detects training-like items based on markers and reclassifies them.
+
+        Markers for training:
+        - Duration mentions: "Διάρκειας X ωρών" (Duration X hours)
+        - Section context: "Σεμινάρια" section in raw CV text
+        - Organizer type: "Επιμελητήριο", "Εργαστήριο" (professional bodies)
+        - Topic patterns: legal updates, best practices, workshops
+
+        Args:
+            certifications: List of parsed certifications
+            raw_cv_text: Original CV text for context detection
+
+        Returns:
+            Tuple of (filtered_certifications, detected_training)
+        """
+        # Patterns that indicate training/seminars
+        training_patterns = [
+            r"διάρκει(?:ας|α)",  # Duration mentions
+            r"\d+\s*ωρ(?:ών|ες|ών)",  # X hours
+            r"σεμιν[αά]ρι",  # Seminar
+            r"workshop",
+            r"βέλτιστ(?:ες|ων)\s*πρακτικ",  # Best practices
+            r"αλλαγ(?:ές|ών)\s*στ(?:ην|ις|ον|ο)",  # Changes in (legal updates)
+            r"πρόσφατ(?:ες|ων)\s*αλλαγ",  # Recent changes
+            r"εκπαιδευτικ(?:ό|ά)\s*πρόγραμμα",  # Educational program
+            r"επιμόρφωσ[ηι]",  # Continuing education
+        ]
+
+        # Organizations that typically provide training (not certifications)
+        training_orgs = [
+            "επιμελητήριο",
+            "οικονομικό επιμελητήριο",
+            "εργαστήριο",
+            "ινστιτούτο.*διοίκησης",
+            "κέντρο.*εκπαίδευσης",
+            "τμήμα.*εκπαίδευσης",
+        ]
+
+        # Check if CV has explicit Σεμινάρια section
+        has_seminars_section = False
+        if raw_cv_text:
+            has_seminars_section = bool(
+                re.search(r"(?:^|\n)\s*σεμιν[αά]ρια\s*(?:\n|$)", raw_cv_text, re.IGNORECASE)
+            )
+
+        filtered_certs = []
+        detected_training = []
+
+        for cert in certifications:
+            is_training = False
+            training_type = "seminar"
+            category = None
+
+            cert_name_lower = (cert.certification_name or "").lower()
+            org_lower = (cert.issuing_organization or "").lower()
+            combined_text = f"{cert_name_lower} {org_lower}"
+
+            # Check training patterns in certification name
+            for pattern in training_patterns:
+                if re.search(pattern, combined_text, re.IGNORECASE):
+                    is_training = True
+                    break
+
+            # Check if organization is a typical training provider
+            if not is_training:
+                for org_pattern in training_orgs:
+                    if re.search(org_pattern, org_lower, re.IGNORECASE):
+                        is_training = True
+                        break
+
+            # If CV has Σεμινάρια section and cert matches items there, it's training
+            if not is_training and has_seminars_section and raw_cv_text:
+                # Check if cert name appears in Σεμινάρια section
+                seminars_match = re.search(
+                    r"σεμιν[αά]ρια\s*(.*?)(?:(?:^|\n)\s*[α-ωά-ώ]+\s*(?:\n|$)|$)",
+                    raw_cv_text,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if seminars_match:
+                    seminars_section = seminars_match.group(1).lower()
+                    # Check if cert name keywords appear in seminars section
+                    cert_keywords = cert_name_lower.split()[:3]  # First 3 words
+                    if any(kw in seminars_section for kw in cert_keywords if len(kw) > 3):
+                        is_training = True
+
+            if is_training:
+                # Detect category based on content
+                if any(
+                    kw in cert_name_lower
+                    for kw in ["νομοθεσία", "νομικ", "νόμ.", "ν."]
+                ):
+                    category = "legal"
+                elif any(
+                    kw in cert_name_lower
+                    for kw in ["λογιστ", "κοστολόγ", "φορολογ", "οικονομικ"]
+                ):
+                    category = "accounting"
+                elif any(
+                    kw in cert_name_lower
+                    for kw in ["ανθρώπινου δυναμικού", "hr", "διοίκηση προσωπικού"]
+                ):
+                    category = "hr"
+                elif any(kw in cert_name_lower for kw in ["πληροφορικ", "it", "software"]):
+                    category = "it"
+                elif any(kw in cert_name_lower for kw in ["ασφάλεια", "safety"]):
+                    category = "safety"
+                elif any(kw in cert_name_lower for kw in ["διοίκηση", "management"]):
+                    category = "management"
+
+                # Extract duration if mentioned
+                duration_hours = None
+                duration_match = re.search(r"(\d+)\s*ωρ(?:ών|ες)", combined_text)
+                if duration_match:
+                    duration_hours = int(duration_match.group(1))
+
+                # Create training record
+                training = ParsedTraining(
+                    training_name=cert.certification_name,
+                    provider_name=cert.issuing_organization,
+                    provider_type="professional_body" if "επιμελητήριο" in org_lower else "other",
+                    training_type=training_type,
+                    category=category,
+                    duration_hours=duration_hours,
+                    completion_date=cert.issue_date.isoformat() if cert.issue_date else None,
+                    certificate_received=True,  # They listed it, so probably got attendance cert
+                    raw_text=cert.raw_text,
+                    confidence=cert.confidence,
+                )
+                detected_training.append(training)
+
+                logger.info(
+                    f"Reclassified certification to training: '{cert.certification_name}' "
+                    f"(category: {category}, duration: {duration_hours}h)"
+                )
+            else:
+                filtered_certs.append(cert)
+
+        if detected_training:
+            logger.info(
+                f"Post-processing: Reclassified {len(detected_training)} certifications "
+                f"to training/seminars"
+            )
+
+        return filtered_certs, detected_training
 
 
 # Convenience function for simple usage

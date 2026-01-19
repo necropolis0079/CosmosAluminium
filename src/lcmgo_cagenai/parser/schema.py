@@ -378,6 +378,32 @@ class ParsedSoftware:
 
 
 @dataclass
+class ParsedTraining:
+    """
+    Training, seminar, workshop, or CPE (Continuing Professional Education).
+
+    Distinct from certifications - these are professional development activities
+    that may or may not result in a formal qualification.
+    Common in Greek CVs as "Σεμινάρια" section.
+    """
+
+    training_name: str  # Name of training/seminar
+    provider_name: str | None = None  # Organization that provided it
+    provider_type: str | None = None  # 'university', 'professional_body', 'company', 'online', 'government', 'other'
+    training_type: str = "seminar"  # 'seminar', 'workshop', 'course', 'webinar', 'conference', 'cpe', 'other'
+    category: str | None = None  # 'accounting', 'legal', 'hr', 'it', 'management', 'safety', 'technical', 'other'
+    duration_hours: int | None = None
+    duration_days: int | None = None
+    completion_date: str | None = None  # YYYY-MM-DD
+    start_date: str | None = None  # YYYY-MM-DD
+    description: str | None = None
+    skills_gained: list[str] = field(default_factory=list)
+    certificate_received: bool = False  # Certificate of attendance (not formal cert)
+    raw_text: str | None = None
+    confidence: float = 0.0
+
+
+@dataclass
 class ParsedUnmatchedData:
     """
     Data that could not be mapped to existing structure.
@@ -407,6 +433,7 @@ class ParsedCV:
     certifications: list[ParsedCertification] = field(default_factory=list)
     driving_licenses: list[ParsedDrivingLicense] = field(default_factory=list)
     software: list[ParsedSoftware] = field(default_factory=list)
+    training: list[ParsedTraining] = field(default_factory=list)
 
     # Unmatched data (zero data loss)
     unmatched_data: list[ParsedUnmatchedData] = field(default_factory=list)
