@@ -928,7 +928,7 @@ function transformDbCandidate(dbCandidate) {
         skills_count: (dbCandidate.skills || []).length,
         experience_count: experience.length,
         education_count: (dbCandidate.education || []).length,
-        upload_date: dbCandidate.uploaded_at || dbCandidate.created_at,
+        upload_date: dbCandidate.created_at,
         filename: dbCandidate.original_filename,
         cv_url: dbCandidate.s3_key ? `https://lcmgo-cagenai-prod-cv-uploads-eun1.s3.eu-north-1.amazonaws.com/${dbCandidate.s3_key}` : null,
         // Store full data for viewing details
