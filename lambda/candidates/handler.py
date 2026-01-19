@@ -22,7 +22,7 @@ DB_SECRET_ARN = os.environ.get("DB_SECRET_ARN", "lcmgo-cagenai-prod-db-credentia
 DB_HOST = os.environ.get("DB_HOST", "lcmgo-cagenai-prod-postgres.c324io6eq6iv.eu-north-1.rds.amazonaws.com")
 DB_NAME = os.environ.get("DB_NAME", "cagenai")
 DB_PORT = int(os.environ.get("DB_PORT", "5432"))
-AWS_REGION = os.environ.get("AWS_REGION", "eu-north-1")
+AWS_REGION = os.environ.get("AWS_REGION_NAME", "eu-north-1")
 
 
 def get_db_credentials() -> dict:

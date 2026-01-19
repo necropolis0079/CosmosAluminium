@@ -129,11 +129,11 @@ resource "aws_lambda_function" "candidates" {
 
   environment {
     variables = {
-      DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
-      DB_HOST       = aws_db_instance.postgres.address
-      DB_NAME       = aws_db_instance.postgres.db_name
-      DB_PORT       = tostring(aws_db_instance.postgres.port)
-      AWS_REGION    = var.aws_region
+      DB_SECRET_ARN   = aws_secretsmanager_secret.db_credentials.arn
+      DB_HOST         = aws_db_instance.main.address
+      DB_NAME         = aws_db_instance.main.db_name
+      DB_PORT         = tostring(aws_db_instance.main.port)
+      AWS_REGION_NAME = var.aws_region
     }
   }
 
