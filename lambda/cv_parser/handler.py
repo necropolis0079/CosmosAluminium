@@ -164,6 +164,8 @@ async def process_cv(
         f"education={len(parsed_cv.education)}, "
         f"experience={len(parsed_cv.experience)}, "
         f"skills={len(parsed_cv.skills)}, "
+        f"certifications={len(parsed_cv.certifications)}, "
+        f"training={len(parsed_cv.training)}, "
         f"unmatched_data={len(parsed_cv.unmatched_data)}, "
         f"confidence={parsed_cv.overall_confidence:.2f}"
     )
@@ -284,6 +286,8 @@ async def process_cv(
         "skills_count": len(parsed_cv.skills),
         "experience_count": len(parsed_cv.experience),
         "education_count": len(parsed_cv.education),
+        "certifications_count": len(parsed_cv.certifications),
+        "training_count": len(parsed_cv.training),
         "unmatched_data_count": len(parsed_cv.unmatched_data),
     }
 
@@ -324,6 +328,7 @@ async def process_cv(
             "education": len(parsed_cv.education),
             "languages": len(parsed_cv.languages),
             "certifications": len(parsed_cv.certifications),
+            "training": len(parsed_cv.training),
             "unmatched_data": len(parsed_cv.unmatched_data),
         },
     }

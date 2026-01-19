@@ -248,6 +248,27 @@ CANDIDATES_MAPPING = {
                     "is_current": {"type": "boolean"},
                 },
             },
+            # Training/Seminars (nested)
+            "training": {
+                "type": "nested",
+                "properties": {
+                    "name": {
+                        "type": "text",
+                        "analyzer": "greek_analyzer",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "provider": {
+                        "type": "text",
+                        "analyzer": "greek_analyzer",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "type": {"type": "keyword"},
+                    "category": {"type": "keyword"},
+                    "duration_hours": {"type": "integer"},
+                },
+            },
+            # Training names for simple keyword search
+            "training_names": {"type": "keyword"},
             # Languages (nested)
             "languages": {
                 "type": "nested",

@@ -213,6 +213,11 @@ class SearchIndexer:
             cert_text = ", ".join(c.certification_name for c in parsed_cv.certifications[:5])
             parts.append(f"Certifications: {cert_text}")
 
+        # Training/Seminars
+        if parsed_cv.training:
+            training_text = ", ".join(t.training_name for t in parsed_cv.training[:5])
+            parts.append(f"Training: {training_text}")
+
         return " | ".join(parts)
 
     async def _generate_embedding(self, text: str) -> list[float]:
@@ -310,6 +315,17 @@ class SearchIndexer:
                 "valid": cert.is_current,
             })
 
+        # Build training list
+        training = []
+        for t in parsed_cv.training:
+            training.append({
+                "name": t.training_name,
+                "provider": t.provider_name,
+                "type": t.training_type,
+                "category": t.category,
+                "duration_hours": t.duration_hours,
+            })
+
         # Build driving licenses list
         driving_licenses = [
             dl.license_category.value for dl in parsed_cv.driving_licenses
@@ -344,6 +360,8 @@ class SearchIndexer:
             "language_codes": [l.language_code for l in parsed_cv.languages],
             "certifications": certifications,
             "certification_names": [c.certification_name for c in parsed_cv.certifications],
+            "training": training,
+            "training_names": [t.training_name for t in parsed_cv.training],
             "driving_licenses": driving_licenses,
             "cv_text": parsed_cv.raw_cv_text[:10000] if parsed_cv.raw_cv_text else None,
             "cv_embedding": embedding,
