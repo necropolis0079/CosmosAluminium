@@ -53,6 +53,9 @@ def json_serializer(obj: Any) -> Any:
         return float(obj)
     if isinstance(obj, bytes):
         return obj.decode("utf-8", errors="replace")
+    # Handle UUID type
+    if hasattr(obj, 'hex'):  # UUID has a hex attribute
+        return str(obj)
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
@@ -76,7 +79,7 @@ def list_candidates(conn, limit: int = 100, offset: int = 0) -> list:
     # Get candidates with basic info
     candidates_query = """
         SELECT
-            c.candidate_id,
+            c.id,
             c.first_name,
             c.last_name,
             c.email,
@@ -91,12 +94,10 @@ def list_candidates(conn, limit: int = 100, offset: int = 0) -> list:
             c.created_at,
             c.updated_at,
             c.quality_score,
-            c.data_completeness,
-            cd.original_filename,
-            cd.s3_key,
-            cd.uploaded_at
+            cd.file_name,
+            cd.s3_key
         FROM candidates c
-        LEFT JOIN candidate_documents cd ON c.candidate_id = cd.candidate_id
+        LEFT JOIN candidate_documents cd ON c.id = cd.candidate_id AND cd.is_primary = true
         ORDER BY c.created_at DESC
         LIMIT :limit OFFSET :offset
     """
@@ -106,8 +107,8 @@ def list_candidates(conn, limit: int = 100, offset: int = 0) -> list:
         "candidate_id", "first_name", "last_name", "email", "phone",
         "date_of_birth", "nationality", "address_street", "address_city",
         "address_postal_code", "address_country", "military_status",
-        "created_at", "updated_at", "quality_score", "data_completeness",
-        "original_filename", "s3_key", "uploaded_at"
+        "created_at", "updated_at", "quality_score",
+        "original_filename", "s3_key"
     ]
 
     candidates = []
@@ -169,8 +170,8 @@ def get_candidate_experience(conn, candidate_id: str) -> list:
 def get_candidate_education(conn, candidate_id: str) -> list:
     """Get candidate education."""
     query = """
-        SELECT institution_name, degree_type, degree_title, field_of_study,
-               graduation_year, grade
+        SELECT institution_name, degree_level, degree_title, field_of_study,
+               graduation_year, grade_value
         FROM candidate_education
         WHERE candidate_id = :candidate_id
         ORDER BY graduation_year DESC NULLS LAST
@@ -179,9 +180,9 @@ def get_candidate_education(conn, candidate_id: str) -> list:
     return [
         {
             "institution_name": r[0],
-            "degree_type": r[1],
+            "degree_level": str(r[1]) if r[1] else None,
             "degree_title": r[2],
-            "field_of_study": r[3],
+            "field_of_study": str(r[3]) if r[3] else None,
             "graduation_year": r[4],
             "grade": r[5],
         }
@@ -192,18 +193,19 @@ def get_candidate_education(conn, candidate_id: str) -> list:
 def get_candidate_skills(conn, candidate_id: str) -> list:
     """Get candidate skills (both technical and soft)."""
     query = """
-        SELECT skill_name, proficiency_level, years_experience, category
-        FROM candidate_skills
-        WHERE candidate_id = :candidate_id
-        ORDER BY category, skill_name
+        SELECT COALESCE(st.name_el, st.name_en), cs.skill_level, cs.years_of_experience, st.category
+        FROM candidate_skills cs
+        JOIN skill_taxonomy st ON cs.skill_id = st.id
+        WHERE cs.candidate_id = :candidate_id
+        ORDER BY st.category, st.name_en
     """
     rows = conn.run(query, candidate_id=candidate_id)
     return [
         {
             "name": r[0],
-            "level": r[1],
-            "years": r[2],
-            "category": r[3] or "technical",
+            "level": str(r[1]) if r[1] else None,
+            "years": float(r[2]) if r[2] else None,
+            "category": str(r[3]) if r[3] else "technical",
         }
         for r in rows
     ]
@@ -215,13 +217,13 @@ def get_candidate_languages(conn, candidate_id: str) -> list:
         SELECT language_name, proficiency_level, is_native
         FROM candidate_languages
         WHERE candidate_id = :candidate_id
-        ORDER BY is_native DESC, language_name
+        ORDER BY is_native DESC NULLS LAST, language_name
     """
     rows = conn.run(query, candidate_id=candidate_id)
     return [
         {
             "language_name": r[0],
-            "proficiency_level": r[1],
+            "proficiency_level": str(r[1]) if r[1] else None,
             "is_native": r[2],
         }
         for r in rows
@@ -273,17 +275,18 @@ def get_candidate_training(conn, candidate_id: str) -> list:
 def get_candidate_software(conn, candidate_id: str) -> list:
     """Get candidate software proficiencies."""
     query = """
-        SELECT software_name, proficiency_level, years_experience
-        FROM candidate_software
-        WHERE candidate_id = :candidate_id
-        ORDER BY software_name
+        SELECT st.name, cs.proficiency_level, cs.years_of_experience
+        FROM candidate_software cs
+        JOIN software_taxonomy st ON cs.software_id = st.id
+        WHERE cs.candidate_id = :candidate_id
+        ORDER BY st.name
     """
     rows = conn.run(query, candidate_id=candidate_id)
     return [
         {
             "name": r[0],
-            "proficiency_level": r[1],
-            "years_experience": r[2],
+            "proficiency_level": str(r[1]) if r[1] else None,
+            "years_experience": float(r[2]) if r[2] else None,
         }
         for r in rows
     ]
@@ -310,12 +313,10 @@ def get_candidate_licenses(conn, candidate_id: str) -> list:
 
 def get_candidate_by_id(conn, candidate_id: str) -> dict | None:
     """Get a single candidate by ID with full data."""
-    candidates = list_candidates(conn, limit=1, offset=0)
-
-    # Re-query for specific candidate
+    # Query for specific candidate
     query = """
         SELECT
-            c.candidate_id,
+            c.id,
             c.first_name,
             c.last_name,
             c.email,
@@ -330,13 +331,11 @@ def get_candidate_by_id(conn, candidate_id: str) -> dict | None:
             c.created_at,
             c.updated_at,
             c.quality_score,
-            c.data_completeness,
-            cd.original_filename,
-            cd.s3_key,
-            cd.uploaded_at
+            cd.file_name,
+            cd.s3_key
         FROM candidates c
-        LEFT JOIN candidate_documents cd ON c.candidate_id = cd.candidate_id
-        WHERE c.candidate_id = :candidate_id
+        LEFT JOIN candidate_documents cd ON c.id = cd.candidate_id AND cd.is_primary = true
+        WHERE c.id = :candidate_id
     """
 
     rows = conn.run(query, candidate_id=candidate_id)
@@ -347,8 +346,8 @@ def get_candidate_by_id(conn, candidate_id: str) -> dict | None:
         "candidate_id", "first_name", "last_name", "email", "phone",
         "date_of_birth", "nationality", "address_street", "address_city",
         "address_postal_code", "address_country", "military_status",
-        "created_at", "updated_at", "quality_score", "data_completeness",
-        "original_filename", "s3_key", "uploaded_at"
+        "created_at", "updated_at", "quality_score",
+        "original_filename", "s3_key"
     ]
 
     candidate = dict(zip(columns, rows[0]))
@@ -370,7 +369,7 @@ def delete_candidate(conn, candidate_id: str) -> bool:
     """Delete a candidate and all related data."""
     # Check if exists
     check = conn.run(
-        "SELECT candidate_id FROM candidates WHERE candidate_id = :candidate_id",
+        "SELECT id FROM candidates WHERE id = :candidate_id",
         candidate_id=candidate_id
     )
     if not check:
@@ -387,6 +386,8 @@ def delete_candidate(conn, candidate_id: str) -> bool:
         "candidate_software",
         "candidate_driving_licenses",
         "candidate_documents",
+        "unmatched_taxonomy_items",
+        "unmatched_cv_data",
     ]
 
     for table in tables:
@@ -396,7 +397,7 @@ def delete_candidate(conn, candidate_id: str) -> bool:
             logger.warning(f"Error deleting from {table}: {e}")
 
     # Delete candidate
-    conn.run("DELETE FROM candidates WHERE candidate_id = :candidate_id", candidate_id=candidate_id)
+    conn.run("DELETE FROM candidates WHERE id = :candidate_id", candidate_id=candidate_id)
 
     return True
 
