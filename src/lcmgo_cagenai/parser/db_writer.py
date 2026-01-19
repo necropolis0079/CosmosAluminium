@@ -19,7 +19,7 @@ from uuid import UUID
 import boto3
 import pg8000
 
-from .schema import CVCompletenessAudit, ParsedCV
+from .schema import CVCompletenessAudit, ParsedCV, ParsedUnmatchedData
 from .taxonomy_mapper import normalize_text
 
 logger = logging.getLogger(__name__)
@@ -274,10 +274,24 @@ class DatabaseWriter:
             # Update parsed JSON
             self._update_parsed_json(cursor, candidate_id, parsed_cv)
 
+            # Write unmatched CV data (zero data loss policy)
+            unmatched_cv_count = 0
+            if parsed_cv.unmatched_data:
+                unmatched_cv_count = self.write_unmatched_cv_data(
+                    cursor, candidate_id, parsed_cv.unmatched_data
+                )
+
+            # Write raw CV JSON backup (zero data loss policy)
+            if parsed_cv.raw_json:
+                self.write_raw_cv_json(cursor, candidate_id, parsed_cv.raw_json)
+
             # Commit transaction
             conn.commit()
 
-            logger.info(f"Successfully wrote candidate {candidate_id}")
+            logger.info(
+                f"Successfully wrote candidate {candidate_id}"
+                + (f", {unmatched_cv_count} unmatched CV data items" if unmatched_cv_count > 0 else "")
+            )
 
             # Post-write verification (Task 1.2)
             if verify_write:
@@ -1205,6 +1219,105 @@ class DatabaseWriter:
         except Exception as e:
             # Don't fail the whole operation if DynamoDB update fails
             logger.warning(f"Failed to store verification/audit in DynamoDB: {e}")
+
+    def write_unmatched_cv_data(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        unmatched_items: list[ParsedUnmatchedData],
+    ) -> int:
+        """
+        Write unmatched CV data to the unmatched_cv_data table.
+
+        This implements the zero data loss policy - any data that the LLM
+        could not map to existing fields is captured here for later review.
+
+        Args:
+            cursor: Database cursor
+            candidate_id: Candidate UUID
+            unmatched_items: List of ParsedUnmatchedData from parsed CV
+
+        Returns:
+            Number of items written
+        """
+        if not unmatched_items:
+            return 0
+
+        count = 0
+        for item in unmatched_items:
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO unmatched_cv_data (
+                        candidate_id,
+                        suggested_section,
+                        field_name,
+                        field_value,
+                        field_value_normalized,
+                        source_text,
+                        extraction_confidence,
+                        llm_reasoning,
+                        review_status
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        str(candidate_id),
+                        item.suggested_section,
+                        item.field_name,
+                        item.field_value,
+                        normalize_text(item.field_value) if item.field_value else None,
+                        item.source_text,
+                        item.extraction_confidence,
+                        item.llm_reasoning,
+                        "pending",
+                    ),
+                )
+                count += 1
+            except Exception as e:
+                logger.warning(f"Failed to insert unmatched item '{item.field_name}': {e}")
+
+        if count > 0:
+            logger.info(f"Wrote {count} unmatched CV data items for candidate {candidate_id}")
+
+        return count
+
+    def write_raw_cv_json(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        raw_json: dict,
+    ) -> bool:
+        """
+        Write raw CV JSON to candidates.raw_cv_json column as backup.
+
+        This ensures zero data loss - even if parsing/mapping fails,
+        the complete raw JSON from the LLM is preserved.
+
+        Args:
+            cursor: Database cursor
+            candidate_id: Candidate UUID
+            raw_json: Complete parsed CV data as dictionary
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            cursor.execute(
+                """
+                UPDATE candidates
+                SET raw_cv_json = %s
+                WHERE id = %s
+                """,
+                (
+                    json.dumps(raw_json, ensure_ascii=False),
+                    str(candidate_id),
+                ),
+            )
+            logger.debug(f"Stored raw CV JSON for candidate {candidate_id}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to store raw CV JSON: {e}")
+            return False
 
     @staticmethod
     def _get_quality_level(score: float) -> str:

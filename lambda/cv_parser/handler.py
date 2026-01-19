@@ -164,6 +164,7 @@ async def process_cv(
         f"education={len(parsed_cv.education)}, "
         f"experience={len(parsed_cv.experience)}, "
         f"skills={len(parsed_cv.skills)}, "
+        f"unmatched_data={len(parsed_cv.unmatched_data)}, "
         f"confidence={parsed_cv.overall_confidence:.2f}"
     )
 
@@ -283,6 +284,7 @@ async def process_cv(
         "skills_count": len(parsed_cv.skills),
         "experience_count": len(parsed_cv.experience),
         "education_count": len(parsed_cv.education),
+        "unmatched_data_count": len(parsed_cv.unmatched_data),
     }
 
     # Add verification results to final state (Task 1.2)
@@ -322,6 +324,7 @@ async def process_cv(
             "education": len(parsed_cv.education),
             "languages": len(parsed_cv.languages),
             "certifications": len(parsed_cv.certifications),
+            "unmatched_data": len(parsed_cv.unmatched_data),
         },
     }
 

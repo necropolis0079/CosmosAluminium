@@ -23,6 +23,7 @@ from .schema import (
     ParsedPersonal,
     ParsedSkill,
     ParsedSoftware,
+    ParsedUnmatchedData,
     get_language_code,
     normalize_language_proficiency,
     normalize_skill_level,
@@ -458,6 +459,16 @@ CV TEXT TO PARSE:
             if sw:
                 software.append(sw)
 
+        # Parse unmatched data (zero data loss policy)
+        unmatched_data = []
+        for unmatched_item in data.get("unmatched_data", []):
+            unmatched = self._parse_unmatched_data(unmatched_item)
+            if unmatched:
+                unmatched_data.append(unmatched)
+
+        if unmatched_data:
+            logger.info(f"Captured {len(unmatched_data)} unmatched CV data items")
+
         return ParsedCV(
             personal=personal,
             education=education,
@@ -467,6 +478,7 @@ CV TEXT TO PARSE:
             certifications=certifications,
             driving_licenses=driving_licenses,
             software=software,
+            unmatched_data=unmatched_data,
             correlation_id=correlation_id,
             raw_cv_text=cv_text,
             raw_json=data,
@@ -737,6 +749,35 @@ CV TEXT TO PARSE:
             sw.proficiency_level = normalize_skill_level(data["proficiency_level"])
 
         return sw
+
+    def _parse_unmatched_data(
+        self,
+        data: dict[str, Any],
+    ) -> ParsedUnmatchedData | None:
+        """
+        Parse unmatched CV data item.
+
+        This handles data that the LLM could not map to existing fields,
+        implementing the zero data loss policy.
+
+        Args:
+            data: Unmatched data item from LLM response
+
+        Returns:
+            ParsedUnmatchedData or None if invalid
+        """
+        # Both field_name and field_value are required
+        if not data.get("field_name") or not data.get("field_value"):
+            return None
+
+        return ParsedUnmatchedData(
+            suggested_section=data.get("suggested_section", "other"),
+            field_name=data["field_name"],
+            field_value=str(data["field_value"]),
+            source_text=data.get("source_text"),
+            extraction_confidence=data.get("extraction_confidence", 0.0),
+            llm_reasoning=data.get("llm_reasoning"),
+        )
 
 
 # Convenience function for simple usage

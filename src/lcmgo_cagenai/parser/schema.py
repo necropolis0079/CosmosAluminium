@@ -378,6 +378,23 @@ class ParsedSoftware:
 
 
 @dataclass
+class ParsedUnmatchedData:
+    """
+    Data that could not be mapped to existing structure.
+
+    Used for zero data loss policy - captures any CV data that the LLM
+    cannot confidently map to existing tables/fields.
+    """
+
+    suggested_section: str  # 'personal', 'skill', 'certification', 'software', etc.
+    field_name: str  # What the LLM named this field
+    field_value: str  # The actual value from CV
+    source_text: str | None = None  # Original text snippet
+    extraction_confidence: float = 0.0
+    llm_reasoning: str | None = None  # Why it couldn't be mapped
+
+
+@dataclass
 class ParsedCV:
     """Complete parsed CV structure."""
 
@@ -390,6 +407,9 @@ class ParsedCV:
     certifications: list[ParsedCertification] = field(default_factory=list)
     driving_licenses: list[ParsedDrivingLicense] = field(default_factory=list)
     software: list[ParsedSoftware] = field(default_factory=list)
+
+    # Unmatched data (zero data loss)
+    unmatched_data: list[ParsedUnmatchedData] = field(default_factory=list)
 
     # Metadata
     correlation_id: str | None = None

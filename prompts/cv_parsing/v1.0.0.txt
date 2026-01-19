@@ -65,6 +65,32 @@ IMPORTANT RULES:
    - 0.3-0.5: Uncertain, based on limited context
    - 0.0-0.3: Highly uncertain or guessed
 
+9. ZERO DATA LOSS - STRICT MAPPING RULES:
+   ALL CV data must be captured. Use this decision tree:
+
+   Step 1: Is it a SOFTWARE / SYSTEM / APPLICATION / PLATFORM?
+           (Excel, SAP, AutoCAD, Teams, Slack, ERPs, databases)
+           → Put in "software" array
+
+   Step 2: Is it a CERTIFICATE / LICENSE / QUALIFICATION you earn?
+           (ISO, OSHA, AWS Cert, PMP, Welding Cert, ECDL, accounting licenses)
+           → Put in "certifications" array
+
+   Step 3: Is it a DRIVING or EQUIPMENT LICENSE?
+           (A, B, C, D, forklift, crane)
+           → Put in "driving_licenses" array
+
+   Step 4: Is it a SOFT SKILL (personality, interpersonal)?
+           (teamwork, communication, leadership, time management)
+           → Put in "skills" array with category="soft"
+
+   Step 5: Is it a TECHNICAL/HARD SKILL (learned ability)?
+           (welding, programming, quality control, accounting)
+           → Put in "skills" array with category="technical"
+
+   Step 6: CANNOT DETERMINE or DOESN'T FIT ABOVE?
+           → Put in "unmatched_data" array with your reasoning
+
 OUTPUT FORMAT - Return ONLY this JSON structure (no markdown, no explanation):
 {
   "personal": {
@@ -185,6 +211,16 @@ OUTPUT FORMAT - Return ONLY this JSON structure (no markdown, no explanation):
       "version_used": "string or null",
       "years_of_experience": number or null,
       "confidence": 0.0-1.0
+    }
+  ],
+  "unmatched_data": [
+    {
+      "suggested_section": "personal|experience|education|skill|soft_skill|software|certification|license|language|other",
+      "field_name": "string (what you would call this field)",
+      "field_value": "string (the actual value from CV)",
+      "source_text": "string or null (original text snippet)",
+      "extraction_confidence": 0.0-1.0,
+      "llm_reasoning": "string (why you couldn't map it to existing fields)"
     }
   ],
   "overall_confidence": 0.0-1.0
