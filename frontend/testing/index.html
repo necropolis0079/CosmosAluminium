@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmos HR - CV Processing</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Left Sidebar Navigation - 15% width -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <img src="logo.png" alt="Cosmos" class="logo-image">
+                <div class="logo-text">
+                    <span class="logo-name">GenAI Assistant</span>
+                    <span class="logo-tagline">CV Processing</span>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-label-header">MAIN</div>
+
+                <button class="nav-item active" data-page="upload">
+                    <div class="nav-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                    </div>
+                    <span class="nav-text">Upload CVs</span>
+                </button>
+
+                <button class="nav-item" data-page="results">
+                    <div class="nav-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                        </svg>
+                    </div>
+                    <span class="nav-text">Results</span>
+                    <span class="nav-badge" id="resultsBadge" style="display: none;">0</span>
+                </button>
+
+                <button class="nav-item" data-page="candidates">
+                    <div class="nav-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                    </div>
+                    <span class="nav-text">Candidates</span>
+                    <span class="nav-badge" id="candidatesBadge" style="display: none;">0</span>
+                </button>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-label-header">TOOLS</div>
+
+                <button class="nav-item" data-page="chat">
+                    <div class="nav-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                    </div>
+                    <span class="nav-text">Query Search</span>
+                </button>
+
+                <button class="nav-item" data-page="prompt">
+                    <div class="nav-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                    </div>
+                    <span class="nav-text">Configuration</span>
+                </button>
+            </div>
+
+            <div class="sidebar-footer">
+                <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+                    <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path>
+                    </svg>
+                    <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <span>Theme</span>
+                </button>
+                <div class="version-info">v1.0 Beta</div>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-area">
+            <!-- Page Content -->
+            <div class="page-wrapper">
+                <!-- Upload Page -->
+                <section class="page active" id="uploadPage">
+                    <div class="page-header">
+                        <h1>Upload CVs</h1>
+                        <p>Drag and drop CV files for AI-powered extraction and analysis</p>
+                    </div>
+
+                    <div class="upload-area" id="dropzone">
+                        <div class="upload-content">
+                            <div class="upload-icon-wrapper">
+                                <div class="upload-icon-bg"></div>
+                                <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                            </div>
+                            <h3>Drop your CVs here</h3>
+                            <p>or <label for="fileInput" class="browse-link">browse files</label></p>
+                            <div class="file-types">
+                                <span class="file-type-badge">PDF</span>
+                                <span class="file-type-badge">DOCX</span>
+                                <span class="file-type-badge">JPG</span>
+                                <span class="file-type-badge">PNG</span>
+                            </div>
+                        </div>
+                        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.doc,.jpg,.jpeg,.png" style="display: none;">
+                    </div>
+
+                    <!-- File Queue -->
+                    <div class="file-queue" id="fileQueue" style="display: none;">
+                        <div class="queue-header">
+                            <div class="queue-title">
+                                <h3>Upload Queue</h3>
+                                <span class="queue-count" id="queueCount">0 files</span>
+                            </div>
+                            <div class="queue-actions">
+                                <button class="btn btn-ghost" id="clearQueue">Clear All</button>
+                                <button class="btn btn-primary" id="startUpload">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                    </svg>
+                                    Start Processing
+                                </button>
+                            </div>
+                        </div>
+                        <div class="queue-list" id="queueList"></div>
+                    </div>
+
+                    <!-- Processing Status -->
+                    <div class="processing-section" id="processingStatus" style="display: none;">
+                        <div class="section-header">
+                            <h3>Processing Status</h3>
+                            <div class="overall-stats">
+                                <span class="stat-pill" id="completedCount">0 completed</span>
+                                <span class="stat-pill processing" id="processingCount">0 processing</span>
+                            </div>
+                        </div>
+                        <div class="status-grid" id="statusList"></div>
+                    </div>
+                </section>
+
+                <!-- Results Page -->
+                <section class="page" id="resultsPage">
+                    <div class="page-header">
+                        <h1>Extraction Results</h1>
+                        <p>View extracted candidate information from processed CVs</p>
+                    </div>
+
+                    <div class="results-container" id="resultsContainer">
+                        <div class="empty-state" id="noResults">
+                            <div class="empty-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                </svg>
+                            </div>
+                            <h3>No results yet</h3>
+                            <p>Upload and process CVs to see extraction results</p>
+                        </div>
+
+                        <div class="candidate-tabs" id="candidateTabs" style="display: none;">
+                            <div class="tabs-header" id="tabsHeader"></div>
+                            <div class="tabs-content" id="tabsContent"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Candidates Database Page -->
+                <section class="page" id="candidatesPage">
+                    <div class="page-header">
+                        <div class="page-header-row">
+                            <div>
+                                <h1>Candidates Database</h1>
+                                <p>All uploaded CVs organized by role</p>
+                            </div>
+                            <button class="btn btn-primary" id="refreshCandidates">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                                </svg>
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Search and Filter -->
+                    <div class="candidates-toolbar">
+                        <div class="search-box">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input type="text" id="candidateSearch" placeholder="Search candidates...">
+                        </div>
+                        <div class="filter-group">
+                            <select id="roleFilter">
+                                <option value="">All Roles</option>
+                            </select>
+                            <select id="sortOrder">
+                                <option value="newest">Newest First</option>
+                                <option value="oldest">Oldest First</option>
+                                <option value="name">Name A-Z</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Candidates Loading State -->
+                    <div class="candidates-loading" id="candidatesLoading" style="display: none;">
+                        <div class="spinner"></div>
+                        <span>Loading candidates...</span>
+                    </div>
+
+                    <!-- Candidates Empty State -->
+                    <div class="candidates-empty" id="candidatesEmpty">
+                        <div class="empty-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            </svg>
+                        </div>
+                        <h3>No candidates yet</h3>
+                        <p>Upload CVs to see them here</p>
+                    </div>
+
+                    <!-- Candidates List by Role -->
+                    <div class="candidates-by-role" id="candidatesByRole"></div>
+
+                    <!-- Delete Confirmation Modal -->
+                    <div class="modal-overlay" id="deleteModal" style="display: none;">
+                        <div class="modal">
+                            <div class="modal-header">
+                                <h3>Delete Candidate</h3>
+                                <button class="modal-close" id="closeDeleteModal">&times;</button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Are you sure you want to delete <strong id="deleteCandidateName"></strong>?</p>
+                                <p class="modal-warning">This action cannot be undone.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-ghost" id="cancelDelete">Cancel</button>
+                                <button class="btn btn-danger" id="confirmDelete">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Chat/Query Page -->
+                <section class="page" id="chatPage">
+                    <div class="page-header">
+                        <h1>Query Search</h1>
+                        <p>Search candidates using natural language in Greek or English</p>
+                    </div>
+
+                    <div class="chat-container">
+                        <div class="chat-messages" id="chatMessages">
+                            <div class="message system">
+                                <div class="message-content">
+                                    <p>Ask questions about candidates in Greek or English:</p>
+                                    <div class="example-queries">
+                                        <button class="example-query">"Candidates with Excel experience"</button>
+                                        <button class="example-query">"Υποψήφιοι με SAP"</button>
+                                        <button class="example-query">"Mechanical engineers with 5+ years"</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chat-input-area">
+                            <input type="text" id="chatInput" placeholder="Type your query..." autocomplete="off">
+                            <button class="btn btn-primary btn-icon" id="sendMessage">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Configuration Page -->
+                <section class="page" id="promptPage">
+                    <div class="page-header">
+                        <h1>LLM Configuration</h1>
+                        <p>AI extraction rules, mappings, and classification settings</p>
+                    </div>
+
+                    <div class="config-grid">
+                        <div class="config-card">
+                            <div class="config-card-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+                                </svg>
+                                <h3>Extraction Rules</h3>
+                            </div>
+                            <div class="config-card-content">
+                                <ul class="rule-list">
+                                    <li>Extract text EXACTLY as written in CV</li>
+                                    <li>Never use "Unknown" placeholders</li>
+                                    <li>Keep original Greek text intact</li>
+                                    <li>Extract skills from job descriptions</li>
+                                    <li>Map certifications vs training correctly</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-card-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                                </svg>
+                                <h3>Data Classification</h3>
+                            </div>
+                            <div class="config-card-content">
+                                <div class="classification-grid">
+                                    <div class="class-item"><span class="class-badge software">Software</span> Excel, SAP, AutoCAD</div>
+                                    <div class="class-item"><span class="class-badge cert">Certifications</span> ISO, PMP, AWS Certified</div>
+                                    <div class="class-item"><span class="class-badge training">Training</span> Seminars, workshops</div>
+                                    <div class="class-item"><span class="class-badge skill">Skills</span> Technical & soft skills</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="config-card">
+                            <div class="config-card-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                                </svg>
+                                <h3>Greek Mappings</h3>
+                            </div>
+                            <div class="config-card-content">
+                                <div class="mapping-list">
+                                    <div class="mapping-row"><span>Skill Levels</span><span class="mapping-value">beginner...expert</span></div>
+                                    <div class="mapping-row"><span>Language Proficiency</span><span class="mapping-value">A1...C2, native</span></div>
+                                    <div class="mapping-row"><span>Military Status</span><span class="mapping-value">completed, exempt</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

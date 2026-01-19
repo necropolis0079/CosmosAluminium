@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any
 
 import boto3
+from botocore.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,11 @@ class BedrockProvider(LLMProvider):
         embeddings = await provider.embed(["skill: welding", "skill: TIG welding"])
     """
 
+    # Bedrock timeout configuration (in seconds)
+    READ_TIMEOUT = 300  # 5 minutes for complex LLM calls
+    CONNECT_TIMEOUT = 10
+    MAX_RETRIES = 3
+
     def __init__(self, region: str = "eu-north-1"):
         """
         Initialize Bedrock provider.
@@ -132,9 +138,17 @@ class BedrockProvider(LLMProvider):
 
     @property
     def client(self):
-        """Lazy-load Bedrock runtime client."""
+        """Lazy-load Bedrock runtime client with appropriate timeouts."""
         if self._client is None:
-            self._client = boto3.client("bedrock-runtime", region_name=self.region)
+            # Configure longer timeouts for LLM calls
+            config = Config(
+                read_timeout=self.READ_TIMEOUT,
+                connect_timeout=self.CONNECT_TIMEOUT,
+                retries={"max_attempts": self.MAX_RETRIES, "mode": "adaptive"},
+            )
+            self._client = boto3.client(
+                "bedrock-runtime", region_name=self.region, config=config
+            )
         return self._client
 
     async def complete(self, request: LLMRequest) -> LLMResponse:

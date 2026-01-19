@@ -58,7 +58,7 @@ class CVParser:
 
     MODEL = ModelType.CLAUDE_SONNET
     MAX_RETRIES = 2
-    MAX_TOKENS = 8000
+    MAX_TOKENS = 64000  # Max tokens for Claude 4.5 Sonnet output
 
     def __init__(
         self,
@@ -111,7 +111,40 @@ class CVParser:
         """Get embedded fallback prompt."""
         return """You are an expert HR document parser specializing in Greek and English CVs.
 
-TASK: Parse the provided CV text and extract structured information.
+TASK: Parse the provided CV text and extract ALL structured information.
+
+CRITICAL EXTRACTION RULES (MUST FOLLOW):
+=========================================
+1. NEVER output "Unknown Company", "Unknown Institution", "Unknown Certification" or ANY "Unknown X" value
+2. Extract text EXACTLY AS WRITTEN even if format is unusual
+3. company_name: Use whatever text describes the employer (industry description counts as company name)
+4. institution_name: Extract FULL name with abbreviations (e.g., "Ο.Ε.Ε.Κ. (ΙΕΚ)-Λάρισα")
+5. certification_name: Extract FULL title including description
+6. degree_title: Keep ORIGINAL Greek text, don't translate or simplify
+7. address_city: ALWAYS extract city if present (e.g., "Λάρισα" from "Λάρισα 41223")
+8. address_postal_code: ALWAYS extract postal code if present
+9. WHEN IN DOUBT: Extract text as-is rather than omitting
+
+SKILL EXTRACTION FROM JOB RESPONSIBILITIES (CRITICAL):
+=======================================================
+Extract skills from TWO sources:
+1. Explicit "Skills" or "Δεξιότητες" sections → source_context: "skills_section"
+2. Job responsibilities/descriptions → source_context: "experience"
+
+HOW TO IDENTIFY SKILLS IN JOB DESCRIPTIONS:
+- Look for SPECIFIC TASKS: actions the person performed (e.g., "Τιμολόγηση", "Welding", "Programming")
+- Look for PROCESSES: named procedures they handled (e.g., "Μηνιαίο κλείσιμο", "Quality Control", "ΦΠΑ")
+- Look for TECHNICAL TERMS: domain-specific vocabulary (e.g., "διπλογραφικά βιβλία", "CNC", "ERP")
+- Look for TOOLS/METHODS: specific approaches used (e.g., "TIG welding", "Agile", "ISO audit")
+- Look for REGULATIONS/STANDARDS: compliance areas (e.g., "Α.Π.Δ.", "GDPR", "ISO 9001")
+
+EXTRACTION RULES:
+- Extract the skill as a SHORT, SPECIFIC term (not full sentences)
+- Greek skills: keep in Greek (e.g., "Τιμολόγηση", "Υπολογισμός ΦΠΑ")
+- English skills: keep in English (e.g., "CNC Operation", "Quality Control")
+- Set category: "technical" for job-specific skills, "soft" for interpersonal skills, "domain" for industry knowledge
+- Avoid duplicates: if same skill appears in multiple jobs, include once
+- Be COMPREHENSIVE: extract 10-20+ skills from detailed CVs
 
 OUTPUT FORMAT: Return ONLY a valid JSON object with this exact structure:
 {
@@ -174,6 +207,7 @@ OUTPUT FORMAT: Return ONLY a valid JSON object with this exact structure:
       "level": "beginner|intermediate|advanced|expert|master",
       "years_of_experience": 2.5,
       "category": "technical|soft|domain",
+      "source_context": "skills_section|experience|education|certifications",
       "confidence": 0.0-1.0
     }
   ],
@@ -239,6 +273,8 @@ RULES:
 7. If information is unclear or missing, use null
 8. Military status: common in Greek CVs (στρατιωτικές υποχρεώσεις)
 9. Look for LinkedIn URLs in contact section
+10. SKILLS FROM EXPERIENCE: Parse job responsibilities to extract specific competencies as skills with source_context="experience"
+11. Avoid duplicate skills - if same skill appears in multiple jobs, include once with highest confidence
 
 CV TEXT TO PARSE:
 """
@@ -264,9 +300,10 @@ CV TEXT TO PARSE:
         prompt = f"{self.prompt_template}\n{cv_text}"
         logger.info(f"Prompt built: {len(prompt)} chars total")
 
-        # Call Claude with retries
+        # Call Claude with retries (only retry on network/API errors, not JSON parse failures)
         raw_json = None
         last_error = None
+        response_content = None
 
         for attempt in range(self.MAX_RETRIES + 1):
             try:
@@ -279,18 +316,23 @@ CV TEXT TO PARSE:
                         temperature=0.0,
                     )
                 )
-                logger.info(f"Claude API response received")
+                logger.info(
+                    f"Claude API response received: "
+                    f"tokens_in={response.input_tokens}, "
+                    f"tokens_out={response.output_tokens}, "
+                    f"latency={response.latency_ms:.0f}ms"
+                )
+                response_content = response.content
 
                 # Extract JSON from response
                 raw_json = self._extract_json(response.content)
 
                 if raw_json:
-                    logger.info(
-                        f"CV parsed successfully: "
-                        f"tokens_in={response.input_tokens}, "
-                        f"tokens_out={response.output_tokens}, "
-                        f"latency={response.latency_ms:.0f}ms"
-                    )
+                    logger.info("CV parsed successfully")
+                    break
+                else:
+                    # JSON extraction failed - don't retry, same prompt gives same result
+                    logger.error("JSON extraction failed, not retrying (would produce same result)")
                     break
 
             except Exception as e:
@@ -327,28 +369,39 @@ CV TEXT TO PARSE:
         Returns:
             Parsed JSON dict or None
         """
+        logger.info(f"Extracting JSON from response ({len(response_text)} chars)")
+
         # Try direct parse first
         try:
-            return json.loads(response_text)
-        except json.JSONDecodeError:
-            pass
+            result = json.loads(response_text)
+            logger.info("JSON parsed directly")
+            return result
+        except json.JSONDecodeError as e:
+            logger.debug(f"Direct parse failed: {e}")
 
         # Extract from markdown code block
         json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", response_text)
         if json_match:
             try:
-                return json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
+                result = json.loads(json_match.group(1))
+                logger.info("JSON extracted from markdown block")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"Markdown block parse failed: {e}")
 
         # Try to find JSON object
         brace_match = re.search(r"\{[\s\S]*\}", response_text)
         if brace_match:
             try:
-                return json.loads(brace_match.group(0))
-            except json.JSONDecodeError:
-                pass
+                result = json.loads(brace_match.group(0))
+                logger.info("JSON extracted from brace match")
+                return result
+            except json.JSONDecodeError as e:
+                logger.warning(f"Brace match parse failed: {e}")
 
+        # Log failure with response preview
+        preview = response_text[:500] if len(response_text) > 500 else response_text
+        logger.error(f"Failed to extract JSON. Response preview: {preview}")
         return None
 
     def _build_parsed_cv(

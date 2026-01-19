@@ -103,11 +103,25 @@ def process_s3_record(record: dict) -> dict:
     """
     bucket = record["s3"]["bucket"]["name"]
     key = unquote_plus(record["s3"]["object"]["key"])
-    correlation_id = str(uuid.uuid4())
+
+    # Try to get correlation_id from S3 object metadata (set by upload Lambda)
+    correlation_id = None
+    try:
+        head_response = s3.head_object(Bucket=bucket, Key=key)
+        metadata = head_response.get("Metadata", {})
+        correlation_id = metadata.get("correlation-id")  # S3 lowercases header names
+        logger.info(f"Found correlation_id in metadata: {correlation_id}")
+    except Exception as e:
+        logger.warning(f"Could not get S3 metadata: {e}")
+
+    # Fall back to generating new ID if not found
+    if not correlation_id:
+        correlation_id = str(uuid.uuid4())
+        logger.info(f"Generated new correlation_id: {correlation_id}")
 
     logger.info(f"Processing s3://{bucket}/{key}, correlation_id: {correlation_id}")
 
-    # Initialize state in DynamoDB
+    # Update state in DynamoDB (don't overwrite if already exists from upload Lambda)
     update_state(correlation_id, ProcessingStatus.PENDING, {"s3_key": key})
 
     try:

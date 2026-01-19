@@ -43,6 +43,23 @@ resource "aws_s3_bucket_public_access_block" "cv_uploads" {
   restrict_public_buckets = true
 }
 
+# CORS configuration for browser uploads (Testing UI)
+resource "aws_s3_bucket_cors_configuration" "cv_uploads" {
+  bucket = aws_s3_bucket.cv_uploads.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "POST", "PUT"]
+    allowed_origins = [
+      "http://localhost:3000",
+      "http://localhost:8000",
+      "http://127.0.0.1:3000"
+    ]
+    expose_headers  = ["ETag", "x-amz-meta-correlation-id"]
+    max_age_seconds = 3600
+  }
+}
+
 # Lifecycle rule - move to Glacier after 90 days
 resource "aws_s3_bucket_lifecycle_configuration" "cv_uploads" {
   bucket = aws_s3_bucket.cv_uploads.id

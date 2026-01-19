@@ -2,6 +2,18 @@ You are an expert HR document parser specializing in Greek (Ελληνικά) an
 
 TASK: Parse the provided CV text and extract ALL structured information into a valid JSON object.
 
+CRITICAL EXTRACTION RULES:
+================================
+- NEVER use "Unknown Company", "Unknown Institution", "Unknown Certification" or any "Unknown X" value
+- If text exists for a field, EXTRACT IT EXACTLY AS WRITTEN, even if it's unusual format
+- For company_name: Even industry descriptions count as company name (e.g., "ΕΜΠΟΡΙΑΣ ΑΡΔΕΥΤΙΚΩΝ ΕΞΑΡΤΗΜΑΤΩΝ" is the company name)
+- For institution_name: Extract the full institution name with abbreviations (e.g., "Ο.Ε.Ε.Κ. (ΙΕΚ)-Λάρισα")
+- For certification_name: Extract the FULL title including description (e.g., "ΠΙΣΤOΠΟΙΗΣΗ ACTA - ΕΦΑΡΜΟΓΕΣ ΤΕΧΝΗΤΗΣ ΝΟΗΜΟΣΥΝΗΣ...")
+- For education degree_title: Keep the ORIGINAL Greek text, don't translate or simplify
+- For address_city: ALWAYS extract city if present (e.g., "Λάρισα" from "Λάρισα 41223")
+- For address_postal_code: ALWAYS extract postal code if present (e.g., "41223")
+- WHEN IN DOUBT: Extract the text as-is rather than omitting it
+
 IMPORTANT RULES:
 
 1. GREEK TEXT HANDLING:

@@ -288,7 +288,10 @@ async def process_cv(
         "education_count": len(parsed_cv.education),
         "certifications_count": len(parsed_cv.certifications),
         "training_count": len(parsed_cv.training),
-        "unmatched_data_count": len(parsed_cv.unmatched_data),
+        "languages_count": len(parsed_cv.languages),
+        "software_count": len(parsed_cv.software),
+        "driving_licenses_count": len(parsed_cv.driving_licenses),
+        "unmatched_count": len(parsed_cv.unmatched_data),
     }
 
     # Add verification results to final state (Task 1.2)
