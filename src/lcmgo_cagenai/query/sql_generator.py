@@ -19,6 +19,108 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
+# Value translation mappings for normalized database values
+EDUCATION_LEVEL_MAPPING = {
+    # University level (ΑΕΙ)
+    "university": ["bachelor", "master", "doctorate", "phd"],
+    "aei": ["bachelor", "master", "doctorate", "phd"],
+    "αει": ["bachelor", "master", "doctorate", "phd"],
+    "πανεπιστήμιο": ["bachelor", "master", "doctorate", "phd"],
+    "πτυχίο αει": ["bachelor", "master", "doctorate", "phd"],
+    "πτυχιο αει": ["bachelor", "master", "doctorate", "phd"],
+    # TEI level
+    "tei": ["tei", "bachelor"],
+    "τει": ["tei", "bachelor"],
+    "τεχνολογικό": ["tei", "bachelor"],
+    # Specific degrees
+    "bachelor": ["bachelor"],
+    "πτυχίο": ["bachelor", "tei"],
+    "master": ["master"],
+    "μεταπτυχιακό": ["master"],
+    "msc": ["master"],
+    "mba": ["master"],
+    "phd": ["doctorate", "phd"],
+    "διδακτορικό": ["doctorate", "phd"],
+    "doctorate": ["doctorate", "phd"],
+    # High school
+    "lyceum": ["lyceum"],
+    "λύκειο": ["lyceum"],
+    "high school": ["lyceum"],
+    # Vocational
+    "vocational": ["vocational", "iek"],
+    "iek": ["iek", "vocational"],
+    "ιεκ": ["iek", "vocational"],
+    "επαγγελματική": ["vocational", "iek"],
+}
+
+LANGUAGE_CODE_MAPPING = {
+    # English
+    "english": "en",
+    "αγγλικά": "en",
+    "αγγλικα": "en",
+    "en": "en",
+    # Greek
+    "greek": "el",
+    "ελληνικά": "el",
+    "ελληνικα": "el",
+    "el": "el",
+    # German
+    "german": "de",
+    "γερμανικά": "de",
+    "γερμανικα": "de",
+    "de": "de",
+    # French
+    "french": "fr",
+    "γαλλικά": "fr",
+    "γαλλικα": "fr",
+    "fr": "fr",
+    # Italian
+    "italian": "it",
+    "ιταλικά": "it",
+    "ιταλικα": "it",
+    "it": "it",
+    # Spanish
+    "spanish": "es",
+    "ισπανικά": "es",
+    "ισπανικα": "es",
+    "es": "es",
+    # Bulgarian
+    "bulgarian": "bg",
+    "βουλγαρικά": "bg",
+    "βουλγαρικα": "bg",
+    "bg": "bg",
+    # Albanian
+    "albanian": "sq",
+    "αλβανικά": "sq",
+    "αλβανικα": "sq",
+    "sq": "sq",
+    # Russian
+    "russian": "ru",
+    "ρωσικά": "ru",
+    "ρωσικα": "ru",
+    "ru": "ru",
+    # Turkish
+    "turkish": "tr",
+    "τουρκικά": "tr",
+    "τουρκικα": "tr",
+    "tr": "tr",
+    # Chinese
+    "chinese": "zh",
+    "κινεζικά": "zh",
+    "κινεζικα": "zh",
+    "zh": "zh",
+}
+
+
+def translate_education_level(value: str) -> list[str]:
+    """Translate education level to database enum values."""
+    return EDUCATION_LEVEL_MAPPING.get(value.lower(), [value.lower()])
+
+
+def translate_language_code(value: str) -> str:
+    """Translate language name to ISO code."""
+    return LANGUAGE_CODE_MAPPING.get(value.lower(), value.lower())
+
 
 class SQLGenerator:
     """
@@ -342,13 +444,31 @@ FROM candidates c
         if not isinstance(value, list):
             value = [value]
 
+        # Translate values for specific fields
+        if field == "education_level":
+            # Translate education level names to database enum values
+            translated = []
+            for v in value:
+                translated.extend(translate_education_level(str(v)))
+            value = list(set(translated))  # Remove duplicates
+            logger.debug(f"Translated education_level: {value}")
+
+        elif field == "language_codes":
+            # Translate language names to ISO codes
+            value = [translate_language_code(str(v)) for v in value]
+            logger.debug(f"Translated language_codes: {value}")
+
+        # Cast enum columns to text for comparison
+        # degree_level is an enum type
+        column_expr = f"{column}::text" if field == "education_level" else column
+
         if operator == FilterOperator.ANY.value:
             # At least one of the values
             placeholder = self._next_param(value, "text[]")
             return f"""EXISTS (
     SELECT 1 FROM {table}
     WHERE candidate_id = c.id
-      AND {column} = ANY({placeholder})
+      AND {column_expr} = ANY({placeholder})
 )"""
 
         elif operator == FilterOperator.ALL.value:
@@ -356,10 +476,10 @@ FROM candidates c
             placeholder = self._next_param(value, "text[]")
             count_placeholder = self._next_param(len(value), "integer")
             return f"""(
-    SELECT COUNT(DISTINCT {column})
+    SELECT COUNT(DISTINCT {column_expr})
     FROM {table}
     WHERE candidate_id = c.id
-      AND {column} = ANY({placeholder})
+      AND {column_expr} = ANY({placeholder})
 ) = {count_placeholder}"""
 
         elif operator in (FilterOperator.EQ.value, FilterOperator.IN.value):
@@ -368,7 +488,7 @@ FROM candidates c
             return f"""EXISTS (
     SELECT 1 FROM {table}
     WHERE candidate_id = c.id
-      AND {column} = ANY({placeholder})
+      AND {column_expr} = ANY({placeholder})
 )"""
 
         elif operator == FilterOperator.CONTAINS.value:
@@ -439,6 +559,18 @@ FROM candidates c
             if isinstance(search_value, str):
                 placeholder = self._next_param(f"%{search_value}%", "text")
                 name_condition = name_condition_template.format(placeholder=placeholder)
+
+                # Special handling for role_ids: also search job_title directly
+                # because many records have NULL role_id
+                if field == "role_ids":
+                    job_title_placeholder = self._next_param(f"%{search_value}%", "text")
+                    return f"""EXISTS (
+    SELECT 1 FROM {table} {alias}
+    LEFT JOIN {taxonomy_table} {taxonomy_alias} ON {alias}.{join_column} = {taxonomy_alias}.id
+    WHERE {alias}.candidate_id = c.id
+      AND ({name_condition} OR {alias}.job_title ILIKE {job_title_placeholder} OR {alias}.job_title_normalized ILIKE {job_title_placeholder})
+)"""
+
                 return f"""EXISTS (
     SELECT 1 FROM {table} {alias}
     JOIN {taxonomy_table} {taxonomy_alias} ON {alias}.{join_column} = {taxonomy_alias}.id
@@ -454,11 +586,28 @@ FROM candidates c
             if isinstance(value, list) and all(isinstance(v, str) for v in value):
                 # Build OR conditions for each search term
                 conditions = []
+                job_title_conditions = []
                 for v in value:
                     p = self._next_param(f"%{v}%", "text")
                     name_condition = name_condition_template.format(placeholder=p)
                     conditions.append(name_condition)
+                    # For role_ids, also search job_title directly
+                    if field == "role_ids":
+                        jtp = self._next_param(f"%{v}%", "text")
+                        job_title_conditions.append(f"({alias}.job_title ILIKE {jtp} OR {alias}.job_title_normalized ILIKE {jtp})")
+
                 or_clause = " OR ".join(conditions)
+
+                # Special handling for role_ids: use LEFT JOIN and also search job_title
+                if field == "role_ids" and job_title_conditions:
+                    job_title_or = " OR ".join(job_title_conditions)
+                    return f"""EXISTS (
+    SELECT 1 FROM {table} {alias}
+    LEFT JOIN {taxonomy_table} {taxonomy_alias} ON {alias}.{join_column} = {taxonomy_alias}.id
+    WHERE {alias}.candidate_id = c.id
+      AND (({or_clause}) OR ({job_title_or}))
+)"""
+
                 return f"""EXISTS (
     SELECT 1 FROM {table} {alias}
     JOIN {taxonomy_table} {taxonomy_alias} ON {alias}.{join_column} = {taxonomy_alias}.id
