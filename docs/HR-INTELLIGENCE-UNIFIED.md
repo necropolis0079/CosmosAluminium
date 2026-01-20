@@ -655,7 +655,11 @@ POST /v1/query
 | 3.4 | Integration tests | `tests/integration/test_hr_query.py` | 3h |
 | **Subtotal** | | | **9h** |
 
-### 6.4 Phase 4: Dynamic Taxonomy Aliases (Priority: P1, Parallel)
+### 6.4 Phase 4: Dynamic Taxonomy Aliases (Priority: P1, AFTER Phase 3)
+
+> **Note**: This phase is an **ENHANCEMENT**, not a requirement. Phases 1-3 produce a
+> fully working system using the existing static `GREEK_ALIASES` (~350 entries).
+> Phase 4 improves accuracy by auto-syncing aliases with database taxonomy tables.
 
 | Task | Description | Files | Hours |
 |------|-------------|-------|-------|
@@ -675,16 +679,49 @@ POST /v1/query
 | 5.4 | Documentation updates | 2h |
 | **Subtotal** | | **11h** |
 
+### 6.6 Implementation Order & Dependencies
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        IMPLEMENTATION ORDER                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Phase 1: HR Intelligence Core ────┐                                        │
+│           (16.5h)                  │                                        │
+│                                    │  Sequential                            │
+│  Phase 2: Job Posting Parser ──────┤  (dependencies)                        │
+│           (9h)                     │                                        │
+│                                    │                                        │
+│  Phase 3: Query Lambda Integration─┘                                        │
+│           (9h)                                                              │
+│                                                                              │
+│           ════════════════════════════════════════                          │
+│           ▲ WORKING SYSTEM AFTER PHASE 3 (34.5h) ▲                          │
+│           ════════════════════════════════════════                          │
+│                                    │                                        │
+│                                    ▼                                        │
+│  Phase 4: Dynamic Taxonomy ────────── ENHANCEMENT (after Phase 3)           │
+│           (7h)                        Improves alias accuracy               │
+│                                       NOT required for Phases 1-3           │
+│                                    │                                        │
+│                                    ▼                                        │
+│  Phase 5: Testing & Refinement ────── Final polish                          │
+│           (11h)                                                             │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Total Effort
 
-| Phase | Hours |
-|-------|-------|
-| Phase 1: HR Intelligence Core | 16.5h |
-| Phase 2: Job Posting Parser | 9h |
-| Phase 3: Query Lambda Integration | 9h |
-| Phase 4: Dynamic Taxonomy (parallel) | 7h |
-| Phase 5: Testing & Refinement | 11h |
-| **Total** | **52.5h** |
+| Phase | Hours | Dependency | Notes |
+|-------|-------|------------|-------|
+| Phase 1: HR Intelligence Core | 16.5h | None | Core module |
+| Phase 2: Job Posting Parser | 9h | Phase 1 | Input preprocessing |
+| Phase 3: Query Lambda Integration | 9h | Phase 2 | API integration |
+| **Subtotal (Working System)** | **34.5h** | | **MVP Complete** |
+| Phase 4: Dynamic Taxonomy | 7h | Phase 3 | Enhancement (optional) |
+| Phase 5: Testing & Refinement | 11h | Phase 4 | Final polish |
+| **Total** | **52.5h** | | |
 
 ---
 
