@@ -97,3 +97,16 @@ lambda/**/*.zip
 response.json
 tfplan
 coverage.xml
+temp_parsed.json
+nul
+
+# Lambda layer build artifacts
+buildpythonlibpython3.11site-packages/
+lambda_layer/
+layer-package/
+layer_build/
+lcmgo-package-layer.zip
+
+# Temp SQL scripts (bastion training queries)
+scripts/cleanup/bastion/query_training*.sql
+scripts/cleanup/bastion/run_migration.py
