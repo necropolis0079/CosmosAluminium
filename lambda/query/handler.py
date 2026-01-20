@@ -8,6 +8,7 @@ Supports:
 - Direct invocation (from other Lambdas)
 - API Gateway integration (POST /query)
 - Intelligent job matching fallback when strict query returns 0 results
+- HR Intelligence analysis for candidate evaluation (Phase 3)
 
 Environment Variables:
     - DB_SECRET_ARN: RDS credentials secret ARN (for SQL execution)
@@ -67,7 +68,8 @@ def handler(event: dict, context: Any) -> dict:
         "query": "λογιστής με Softone, 5+ χρόνια, Αθήνα",
         "execute": false,           // Optional: execute SQL and return results
         "limit": 50,                // Optional: limit results (default 50)
-        "context": {}               // Optional: additional context
+        "context": {},              // Optional: additional context
+        "include_hr_analysis": true // Optional: include HR Intelligence analysis (default: true)
     }
 
     Event structure (API Gateway):
@@ -81,7 +83,7 @@ def handler(event: dict, context: Any) -> dict:
         context: Lambda context
 
     Returns:
-        Query result with SQL or clarification request
+        Query result with SQL, candidates, and HR analysis
     """
     request_id = str(uuid.uuid4())[:8]
     start_time = time.time()
@@ -95,6 +97,7 @@ def handler(event: dict, context: Any) -> dict:
         execute = body.get("execute", False)
         limit = min(body.get("limit", 50), 500)  # Cap at 500
         query_context = body.get("context", {})
+        include_hr_analysis = body.get("include_hr_analysis", True)  # Default: enabled
 
         if not user_query:
             return _error_response(400, "Missing 'query' parameter", request_id)
@@ -122,6 +125,7 @@ def handler(event: dict, context: Any) -> dict:
             result.get("result_count", -1) == 0 or
             "execution_error" in result
         )
+        relaxation_applied = False
         if (execute and
             use_job_matching and
             needs_fallback and
@@ -134,10 +138,44 @@ def handler(event: dict, context: Any) -> dict:
                     # Combine results
                     result["job_matching"] = job_match_result
                     result["fallback_used"] = True
+                    relaxation_applied = True
                     logger.info(f"Job matching found {job_match_result.get('total_found')} candidates")
             except Exception as e:
                 logger.warning(f"Job matching fallback failed: {e}")
                 result["job_matching_error"] = str(e)
+
+        # HR Intelligence Analysis (Phase 3)
+        # Run HR analysis on the candidates if requested and we have results
+        if execute and include_hr_analysis:
+            candidates_to_analyze = result.get("results", [])
+
+            # If job matching was used, get candidates from there instead
+            if result.get("fallback_used") and result.get("job_matching"):
+                job_matching_candidates = result["job_matching"].get("candidates", [])
+                if job_matching_candidates:
+                    candidates_to_analyze = job_matching_candidates
+
+            if candidates_to_analyze:
+                logger.info(f"Running HR Intelligence analysis on {len(candidates_to_analyze)} candidates")
+                hr_start_time = time.time()
+                try:
+                    hr_analysis = run_hr_intelligence(
+                        user_query=user_query,
+                        candidates=candidates_to_analyze,
+                        translation=result.get("translation", {}),
+                        direct_count=result.get("result_count", 0) if not relaxation_applied else 0,
+                        total_count=len(candidates_to_analyze),
+                        relaxation_applied=relaxation_applied,
+                    )
+                    if hr_analysis:
+                        result["hr_analysis"] = hr_analysis
+                        result["hr_analysis"]["latency_ms"] = int((time.time() - hr_start_time) * 1000)
+                        logger.info(f"HR analysis completed in {result['hr_analysis']['latency_ms']}ms")
+                except Exception as e:
+                    logger.warning(f"HR Intelligence analysis failed: {e}")
+                    result["hr_analysis_error"] = str(e)
+            else:
+                logger.info("No candidates to analyze for HR Intelligence")
 
         # Add request metadata
         result["request_id"] = request_id
@@ -395,6 +433,147 @@ def run_job_matching(query: str, limit: int = 10) -> dict | None:
         return None
     finally:
         conn.close()
+
+
+def run_hr_intelligence(
+    user_query: str,
+    candidates: list[dict],
+    translation: dict,
+    direct_count: int,
+    total_count: int,
+    relaxation_applied: bool,
+) -> dict | None:
+    """
+    Run HR Intelligence analysis on candidates.
+
+    Args:
+        user_query: Original user query
+        candidates: List of candidate dictionaries from SQL results
+        translation: Query translation with filters
+        direct_count: Number of direct matches (before relaxation)
+        total_count: Total number of candidates
+        relaxation_applied: Whether criteria relaxation was used
+
+    Returns:
+        HR analysis result dict or None on failure
+    """
+    try:
+        from lcmgo_cagenai.hr_intelligence import (
+            HRIntelligenceAnalyzer,
+            HRAnalysisInput,
+            JobRequirements,
+            CandidateProfile,
+            format_api_response,
+        )
+        from lcmgo_cagenai.llm import BedrockProvider
+    except ImportError as e:
+        logger.error(f"Failed to import HR Intelligence modules: {e}")
+        return None
+
+    if not candidates:
+        logger.info("No candidates provided for HR analysis")
+        return None
+
+    try:
+        # Create LLM provider
+        llm = BedrockProvider(region=AWS_REGION)
+
+        # Create analyzer
+        analyzer = HRIntelligenceAnalyzer(llm)
+
+        # Convert raw candidate dictionaries to CandidateProfile objects
+        candidate_profiles = []
+        for c in candidates:
+            try:
+                profile = CandidateProfile(
+                    candidate_id=str(c.get("candidate_id", c.get("id", ""))),
+                    first_name=c.get("first_name", ""),
+                    last_name=c.get("last_name", ""),
+                    email=c.get("email"),
+                    total_experience_years=_parse_float(c.get("total_experience_years")),
+                    roles=c.get("roles", []) if isinstance(c.get("roles"), list) else [],
+                    skills=c.get("skills", []) if isinstance(c.get("skills"), list) else [],
+                    soft_skills=c.get("soft_skills", []) if isinstance(c.get("soft_skills"), list) else [],
+                    software=c.get("software", []) if isinstance(c.get("software"), list) else [],
+                    certifications=c.get("certifications", []) if isinstance(c.get("certifications"), list) else [],
+                    languages=c.get("languages", []) if isinstance(c.get("languages"), list) else [],
+                    education=c.get("education", []) if isinstance(c.get("education"), list) else [],
+                    city=c.get("city") or c.get("current_location") or c.get("location"),
+                    region=c.get("region"),
+                    experience_entries=c.get("experience_entries", []) if isinstance(c.get("experience_entries"), list) else [],
+                )
+                candidate_profiles.append(profile)
+            except Exception as e:
+                logger.warning(f"Failed to create CandidateProfile for {c.get('candidate_id')}: {e}")
+                continue
+
+        if not candidate_profiles:
+            logger.warning("No valid candidate profiles could be created")
+            return None
+
+        # Create JobRequirements from translation filters
+        filters = translation.get("filters", {})
+        requirements = JobRequirements(
+            source_type="query",
+            source_text=user_query,
+            detected_language="el" if _is_greek(user_query) else "en",
+            roles=filters.get("role", []) if isinstance(filters.get("role"), list) else [filters.get("role")] if filters.get("role") else [],
+            min_experience_years=filters.get("min_experience"),
+            max_experience_years=filters.get("max_experience"),
+            software=filters.get("software", []) if isinstance(filters.get("software"), list) else [],
+            skills=filters.get("skills", []) if isinstance(filters.get("skills"), list) else [],
+            certifications=filters.get("certifications", []) if isinstance(filters.get("certifications"), list) else [],
+            locations=filters.get("location", []) if isinstance(filters.get("location"), list) else [filters.get("location")] if filters.get("location") else [],
+            education_level=filters.get("education_level"),
+            education_fields=filters.get("education_field", []) if isinstance(filters.get("education_field"), list) else [],
+        )
+
+        # Build relaxations list if applicable
+        relaxations_applied = []
+        if relaxation_applied:
+            relaxations_applied.append("Criteria relaxation was applied to find more candidates")
+
+        # Create input for analyzer
+        analysis_input = HRAnalysisInput(
+            original_query=user_query,
+            requirements=requirements,
+            candidates=candidate_profiles,
+            direct_result_count=direct_count,
+            total_result_count=total_count,
+            relaxations_applied=relaxations_applied,
+        )
+
+        # Run analysis
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            report = loop.run_until_complete(analyzer.analyze(analysis_input))
+        finally:
+            loop.close()
+
+        # Format for API response
+        return format_api_response(report)
+
+    except Exception as e:
+        logger.error(f"HR Intelligence analysis failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
+def _parse_float(value) -> float | None:
+    """Safely parse a float value."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_greek(text: str) -> bool:
+    """Check if text contains Greek characters."""
+    return any('\u0370' <= char <= '\u03FF' or '\u1F00' <= char <= '\u1FFF' for char in text)
 
 
 def _parse_request(event: dict) -> dict:
