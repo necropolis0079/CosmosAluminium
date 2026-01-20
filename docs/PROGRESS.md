@@ -1,10 +1,68 @@
 # Project Progress - LCMGoCloud-CAGenAI
 
-Last Updated: 2026-01-20 (Session 38)
+Last Updated: 2026-01-21 (Session 40)
 
 ---
 
 ## DONE
+
+### 2026-01-21 (Session 40) - Comprehensive Taxonomy Migration
+
+**Objective**: Add comprehensive taxonomy entries for manufacturing company covering 11 departments.
+
+**Migration 021**: `scripts/sql/021_comprehensive_taxonomy.sql`
+
+**Schema Fixes Required** (discovered during migration):
+1. **role_taxonomy**: Changed `level` → `department` column
+2. **skill_taxonomy**: Fixed category values - must use valid enum (technical, soft, language, certification, tool, methodology, domain, other)
+3. **certification_taxonomy**: Changed `name` → `name_en, name_el` and `issuing_body` → `issuing_organization`
+
+**Departments Covered**:
+1. Διοίκηση & Στρατηγική (Management & Strategy)
+2. Οικονομικά & Διοικητική Υποστήριξη (Finance & Admin)
+3. Ανθρώπινο Δυναμικό (Human Resources)
+4. Πωλήσεις & Εμπορική Λειτουργία (Sales & Commercial)
+5. Marketing & Επικοινωνία (Marketing & Communications)
+6. Παραγωγή (Production)
+7. Εφοδιαστική Αλυσίδα & Logistics (Supply Chain & Logistics)
+8. Ποιότητα/Περιβάλλον/Συμμόρφωση (Quality/Environment/Compliance)
+9. R&D/Τεχνικό/Μηχανολογικό (R&D/Technical/Engineering)
+10. IT/Ψηφιακός Μετασχηματισμός (IT/Digital Transformation)
+11. After Sales
+
+**Final Taxonomy Counts**:
+| Category | Count |
+|----------|-------|
+| Roles | 273 |
+| Skills | 298 |
+| Certifications | 147 |
+| Software | 181 |
+| Soft Skills | 51 |
+
+**Query Test Results** (accountant + 5yr + university + ERP/Office + English):
+| Filter Stage | Candidates |
+|--------------|------------|
+| Accountant role | 6 |
+| + 5 years experience | 4 |
+| + University degree | 2 |
+| + ERP/Office + English | **2** ✓ |
+
+**Matching Candidates**:
+- Ελένη-Παρασκευή Βακαλοπούλου (10.75 years)
+- Βάγια Βαΐτση (6.92 years)
+
+**Files Created/Modified**:
+- `scripts/sql/021_comprehensive_taxonomy.sql` - New taxonomy migration
+
+**Current State**:
+| Item | Value |
+|------|-------|
+| Lambda Layer | v51 |
+| PostgreSQL | 37 candidates |
+| OpenSearch | 31 documents |
+| SQL Scripts | **21** |
+
+---
 
 ### 2026-01-20 (Session 38) - Unified HR Intelligence Design & GitHub Setup
 
