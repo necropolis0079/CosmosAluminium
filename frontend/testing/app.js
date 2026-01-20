@@ -806,35 +806,234 @@ function appendChatMessage(type, content) {
 }
 
 function formatQueryResponse(data) {
-    if (data.error) return `Error: ${data.error}`;
+    if (data.error) return `<div class="hr-error">Error: ${escapeHtml(data.error)}</div>`;
 
     // Handle clarification requests
     if (data.clarification?.needed) {
-        let response = data.clarification.question || 'Could you provide more details?';
+        let response = `<div class="hr-clarification">`;
+        response += `<div class="hr-section-title">🤔 ${data.clarification.question || 'Could you provide more details?'}</div>`;
         if (data.clarification.suggestions?.length > 0) {
-            response += '<br><br><strong>Suggestions:</strong><br>';
-            response += data.clarification.suggestions.map(s => `• ${s}`).join('<br>');
+            response += '<div class="hr-suggestions"><strong>Suggestions:</strong><ul>';
+            response += data.clarification.suggestions.map(s => `<li>${escapeHtml(s)}</li>`).join('');
+            response += '</ul></div>';
         }
+        response += '</div>';
         return response;
     }
 
-    // Handle SQL results
-    if (data.results && data.results.length > 0) {
+    // Build response with HR Intelligence analysis if available
+    let html = '';
+
+    // HR Intelligence Analysis (new feature)
+    if (data.hr_analysis) {
+        html += formatHRAnalysis(data.hr_analysis);
+    } else if (data.results && data.results.length > 0) {
+        // Fallback to simple results display if no HR analysis
         const candidates = data.results.map(r => {
             const name = r.first_name && r.last_name
                 ? `${r.first_name} ${r.last_name}`
                 : r.name || 'Unknown';
-            return `• <strong>${name}</strong>${r.email ? ` (${r.email})` : ''}`;
+            return `<li><strong>${escapeHtml(name)}</strong>${r.email ? ` (${escapeHtml(r.email)})` : ''}</li>`;
         });
-        return `Found <strong>${data.results.length}</strong> candidates:<br><br>${candidates.join('<br>')}`;
+        html = `<div class="hr-simple-results">
+            <strong>Found ${data.results.length} candidates:</strong>
+            <ul>${candidates.join('')}</ul>
+        </div>`;
+    } else if (data.sql) {
+        html = `<div class="hr-info">Query executed. ${data.row_count || 0} results found.</div>`;
+    } else {
+        html = `<div class="hr-info">${data.message || 'No results found.'}</div>`;
     }
 
-    // Handle SQL query info
-    if (data.sql) {
-        return `Query executed. ${data.row_count || 0} results found.`;
+    // Add metadata footer
+    if (data.latency_ms) {
+        html += `<div class="hr-metadata">⏱ ${data.latency_ms}ms${data.hr_analysis?.latency_ms ? ` (HR: ${data.hr_analysis.latency_ms}ms)` : ''}</div>`;
     }
 
-    return data.message || 'No results found.';
+    return html;
+}
+
+function formatHRAnalysis(hr) {
+    const lang = hr.analysis_language === 'el' ? 'el' : 'en';
+    const labels = getHRLabels(lang);
+
+    let html = '<div class="hr-analysis">';
+
+    // Section 1: Request Analysis
+    const ra = hr.request_analysis;
+    if (ra) {
+        html += `<div class="hr-section">
+            <div class="hr-section-header" onclick="toggleHRSection(this)">
+                <span class="hr-section-icon">📋</span>
+                <span class="hr-section-title">${labels.requestAnalysis}</span>
+                <span class="hr-toggle">▼</span>
+            </div>
+            <div class="hr-section-content">
+                <div class="hr-summary">${escapeHtml(ra.summary)}</div>
+                ${ra.mandatory_criteria?.length ? `<div class="hr-criteria mandatory"><strong>${labels.mandatory}:</strong> ${ra.mandatory_criteria.map(c => `<span class="hr-tag mandatory">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
+                ${ra.preferred_criteria?.length ? `<div class="hr-criteria preferred"><strong>${labels.preferred}:</strong> ${ra.preferred_criteria.map(c => `<span class="hr-tag preferred">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
+                ${ra.inferred_criteria?.length ? `<div class="hr-criteria inferred"><strong>${labels.inferred}:</strong> ${ra.inferred_criteria.map(c => `<span class="hr-tag inferred">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
+            </div>
+        </div>`;
+    }
+
+    // Section 2: Query Outcome
+    const qo = hr.query_outcome;
+    if (qo) {
+        html += `<div class="hr-section">
+            <div class="hr-section-header" onclick="toggleHRSection(this)">
+                <span class="hr-section-icon">📊</span>
+                <span class="hr-section-title">${labels.queryOutcome}</span>
+                <span class="hr-toggle">▼</span>
+            </div>
+            <div class="hr-section-content">
+                <div class="hr-stats">
+                    <div class="hr-stat"><span class="hr-stat-value">${qo.direct_matches}</span><span class="hr-stat-label">${labels.directMatches}</span></div>
+                    <div class="hr-stat"><span class="hr-stat-value">${qo.total_matches}</span><span class="hr-stat-label">${labels.totalMatches}</span></div>
+                    ${qo.relaxation_applied ? `<div class="hr-stat relaxed"><span class="hr-stat-value">✓</span><span class="hr-stat-label">${labels.relaxationApplied}</span></div>` : ''}
+                </div>
+                ${qo.zero_results_reason ? `<div class="hr-note">💡 ${escapeHtml(qo.zero_results_reason)}</div>` : ''}
+            </div>
+        </div>`;
+    }
+
+    // Section 3: Criteria Expansion (if applicable)
+    const ce = hr.criteria_expansion;
+    if (ce && ce.relaxations?.length > 0) {
+        html += `<div class="hr-section">
+            <div class="hr-section-header" onclick="toggleHRSection(this)">
+                <span class="hr-section-icon">🔄</span>
+                <span class="hr-section-title">${labels.criteriaExpansion}</span>
+                <span class="hr-toggle">▼</span>
+            </div>
+            <div class="hr-section-content">
+                ${ce.relaxations.map(r => `
+                    <div class="hr-relaxation">
+                        <div class="hr-relaxation-change">${escapeHtml(r.original)} → ${escapeHtml(r.relaxed_to)}</div>
+                        <div class="hr-relaxation-reason">💡 ${escapeHtml(r.reasoning)}</div>
+                    </div>
+                `).join('')}
+                ${ce.business_rationale ? `<div class="hr-rationale">📝 ${escapeHtml(ce.business_rationale)}</div>` : ''}
+            </div>
+        </div>`;
+    }
+
+    // Section 4: Ranked Candidates
+    const rc = hr.ranked_candidates;
+    if (rc && rc.length > 0) {
+        html += `<div class="hr-section expanded">
+            <div class="hr-section-header" onclick="toggleHRSection(this)">
+                <span class="hr-section-icon">🏆</span>
+                <span class="hr-section-title">${labels.rankedCandidates} (${rc.length})</span>
+                <span class="hr-toggle">▼</span>
+            </div>
+            <div class="hr-section-content">
+                ${rc.map(c => formatRankedCandidate(c, labels)).join('')}
+            </div>
+        </div>`;
+    }
+
+    // Section 5: HR Recommendation
+    const rec = hr.hr_recommendation;
+    if (rec && rec.recommendation_summary) {
+        html += `<div class="hr-section expanded">
+            <div class="hr-section-header" onclick="toggleHRSection(this)">
+                <span class="hr-section-icon">💼</span>
+                <span class="hr-section-title">${labels.hrRecommendation}</span>
+                <span class="hr-toggle">▼</span>
+            </div>
+            <div class="hr-section-content">
+                ${rec.top_candidates?.length ? `<div class="hr-top-candidates"><strong>${labels.topCandidates}:</strong> ${rec.top_candidates.map((n, i) => `<span class="hr-top-name">${i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'} ${escapeHtml(n)}</span>`).join('')}</div>` : ''}
+                <div class="hr-recommendation-summary">${escapeHtml(rec.recommendation_summary)}</div>
+                ${rec.interview_priorities?.length ? `<div class="hr-priorities"><strong>${labels.interviewPriorities}:</strong><ul>${rec.interview_priorities.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul></div>` : ''}
+                ${rec.hiring_suggestions?.length ? `<div class="hr-suggestions"><strong>${labels.hiringSuggestions}:</strong><ul>${rec.hiring_suggestions.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></div>` : ''}
+                ${rec.alternative_search ? `<div class="hr-alternative">🔍 ${escapeHtml(rec.alternative_search)}</div>` : ''}
+            </div>
+        </div>`;
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function formatRankedCandidate(c, labels) {
+    const suitabilityClass = c.overall_suitability?.toLowerCase().replace(/[^a-z]/g, '-') || 'medium';
+    const stars = getSuitabilityStars(c.overall_suitability);
+
+    return `<div class="hr-candidate">
+        <div class="hr-candidate-header">
+            <span class="hr-rank">#${c.rank}</span>
+            <span class="hr-candidate-name">${escapeHtml(c.candidate_name)}</span>
+            <span class="hr-suitability ${suitabilityClass}">${stars} ${c.overall_suitability} (${Math.round(c.match_percentage)}%)</span>
+        </div>
+        <div class="hr-candidate-body">
+            ${c.strengths?.length ? `<div class="hr-strengths"><strong>✅ ${labels.strengths}:</strong><ul>${c.strengths.map(s => `<li><span class="hr-confidence ${s.confidence?.toLowerCase()}">${getConfidenceIcon(s.confidence)}</span> ${escapeHtml(s.criterion)}: ${escapeHtml(s.candidate_value)}</li>`).join('')}</ul></div>` : ''}
+            ${c.gaps?.length ? `<div class="hr-gaps"><strong>⚠️ ${labels.gaps}:</strong><ul>${c.gaps.map(g => `<li><span class="hr-severity ${g.severity?.toLowerCase()}">${getSeverityIcon(g.severity)}</span> ${escapeHtml(g.criterion)}: ${escapeHtml(g.gap_description)}${g.mitigation ? ` <em>(${escapeHtml(g.mitigation)})</em>` : ''}</li>`).join('')}</ul></div>` : ''}
+            ${c.risks?.length ? `<div class="hr-risks"><strong>⚡ ${labels.risks}:</strong><ul>${c.risks.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul></div>` : ''}
+            ${c.interview_focus?.length ? `<div class="hr-interview-focus"><strong>🎯 ${labels.interviewFocus}:</strong> ${c.interview_focus.map(f => `<span class="hr-focus-tag">${escapeHtml(f)}</span>`).join('')}</div>` : ''}
+        </div>
+    </div>`;
+}
+
+function getHRLabels(lang) {
+    return lang === 'el' ? {
+        requestAnalysis: 'Ανάλυση Αιτήματος',
+        queryOutcome: 'Αποτελέσματα Αναζήτησης',
+        criteriaExpansion: 'Χαλάρωση Κριτηρίων',
+        rankedCandidates: 'Κατάταξη Υποψηφίων',
+        hrRecommendation: 'Σύσταση HR',
+        mandatory: 'Υποχρεωτικά',
+        preferred: 'Επιθυμητά',
+        inferred: 'Υπονοούμενα',
+        directMatches: 'Άμεσα',
+        totalMatches: 'Σύνολο',
+        relaxationApplied: 'Χαλάρωση',
+        topCandidates: 'Κορυφαίοι',
+        interviewPriorities: 'Προτεραιότητες Συνέντευξης',
+        hiringSuggestions: 'Προτάσεις Πρόσληψης',
+        strengths: 'Πλεονεκτήματα',
+        gaps: 'Κενά',
+        risks: 'Κίνδυνοι',
+        interviewFocus: 'Εστίαση Συνέντευξης'
+    } : {
+        requestAnalysis: 'Request Analysis',
+        queryOutcome: 'Query Outcome',
+        criteriaExpansion: 'Criteria Expansion',
+        rankedCandidates: 'Ranked Candidates',
+        hrRecommendation: 'HR Recommendation',
+        mandatory: 'Mandatory',
+        preferred: 'Preferred',
+        inferred: 'Inferred',
+        directMatches: 'Direct',
+        totalMatches: 'Total',
+        relaxationApplied: 'Relaxed',
+        topCandidates: 'Top Candidates',
+        interviewPriorities: 'Interview Priorities',
+        hiringSuggestions: 'Hiring Suggestions',
+        strengths: 'Strengths',
+        gaps: 'Gaps',
+        risks: 'Risks',
+        interviewFocus: 'Interview Focus'
+    };
+}
+
+function getSuitabilityStars(suitability) {
+    const map = { 'High': '⭐⭐⭐', 'Medium-High': '⭐⭐½', 'Medium': '⭐⭐', 'Medium-Low': '⭐½', 'Low': '⭐' };
+    return map[suitability] || '⭐';
+}
+
+function getConfidenceIcon(confidence) {
+    return confidence === 'Confirmed' ? '✓' : confidence === 'Likely' ? '~' : '?';
+}
+
+function getSeverityIcon(severity) {
+    return severity === 'Major' ? '🔴' : severity === 'Moderate' ? '🟡' : '🟢';
+}
+
+function toggleHRSection(header) {
+    const section = header.parentElement;
+    section.classList.toggle('expanded');
+    section.classList.toggle('collapsed');
 }
 
 // Status labels
