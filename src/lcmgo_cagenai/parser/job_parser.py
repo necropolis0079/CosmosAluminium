@@ -19,8 +19,8 @@ from ..llm.provider import BedrockProvider, LLMRequest, LLMResponse, ModelType
 
 logger = logging.getLogger(__name__)
 
-# Prompt template location
-PROMPTS_DIR = Path(__file__).parent.parent / "prompts" / "job_parsing"
+# Prompt template location - go up to repo root level (src/lcmgo_cagenai/parser -> prompts)
+PROMPTS_DIR = Path(__file__).parent.parent.parent.parent / "prompts" / "job_parsing"
 DEFAULT_PROMPT_VERSION = "v1.0.0"
 
 
