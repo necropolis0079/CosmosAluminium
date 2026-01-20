@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..llm.provider import BedrockProvider, LLMRequest, LLMResponse, ModelType
@@ -137,7 +137,7 @@ class HRIntelligenceAnalyzer:
 
         # Add metadata
         report.analysis_language = language
-        report.analysis_timestamp = datetime.utcnow()
+        report.analysis_timestamp = datetime.now(timezone.utc)
         report.llm_model = self.model.value
         report.latency_ms = int((time.time() - start_time) * 1000)
 
@@ -309,7 +309,7 @@ class HRIntelligenceAnalyzer:
                 recommendation, language
             ),
             analysis_language=language,
-            analysis_timestamp=datetime.utcnow(),
+            analysis_timestamp=datetime.now(timezone.utc),
             llm_model=self.model.value,
             latency_ms=int((time.time() - start_time) * 1000),
         )

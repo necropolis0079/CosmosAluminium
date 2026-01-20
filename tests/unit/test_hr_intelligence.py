@@ -360,8 +360,8 @@ class TestPrompts:
 
     def test_build_analysis_prompt(self, sample_job_requirements, sample_candidate):
         """Test full prompt building."""
-        requirements_json = json.dumps(sample_job_requirements.to_dict())
-        candidates_json = json.dumps([sample_candidate.to_dict()])
+        requirements_json = json.dumps(sample_job_requirements.to_dict(), ensure_ascii=False)
+        candidates_json = json.dumps([sample_candidate.to_dict()], ensure_ascii=False)
 
         prompt = build_analysis_prompt(
             requirements_json=requirements_json,

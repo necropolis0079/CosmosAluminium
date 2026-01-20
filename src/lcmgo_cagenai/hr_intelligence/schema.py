@@ -6,8 +6,13 @@ matching the specification in docs/HR-INTELLIGENCE-UNIFIED.md.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
+
+
+def _utc_now() -> datetime:
+    """Get current UTC time (timezone-aware)."""
+    return datetime.now(timezone.utc)
 
 
 # =============================================================================
@@ -401,7 +406,7 @@ class HRAnalysisReport:
 
     # Metadata
     analysis_language: str = "el"  # "el" or "en"
-    analysis_timestamp: datetime = field(default_factory=datetime.utcnow)
+    analysis_timestamp: datetime = field(default_factory=_utc_now)
     llm_model: str = "claude-sonnet-4-5"
     latency_ms: int = 0
 
