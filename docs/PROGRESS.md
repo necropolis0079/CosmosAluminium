@@ -1,10 +1,89 @@
 # Project Progress - LCMGoCloud-CAGenAI
 
-Last Updated: 2026-01-20 (Session 37)
+Last Updated: 2026-01-20 (Session 38)
 
 ---
 
 ## DONE
+
+### 2026-01-20 (Session 38) - Unified HR Intelligence Design & GitHub Setup
+
+**GitHub Repository Setup**:
+- Added GitHub remote: `https://github.com/necropolis0079/CosmosAluminium.git`
+- Pushed main branch and tags (v1.0-stable, v1.1-stable) to GitHub
+- Project now mirrored to both GitLab (origin) and GitHub (github)
+
+**Implementation Overlap Analysis**:
+Analyzed remaining features for overlaps and dependencies:
+
+| Feature A | Feature B | Overlap |
+|-----------|-----------|---------|
+| HR Intelligence Analyzer | Job Matching Simple | **80%** |
+| Job Posting Parser | HR Intelligence | Input preprocessing |
+| Dynamic Taxonomy | Query Translation | Infrastructure |
+
+**Key Finding**: HR Intelligence Analyzer and Job Matching Simple have 80% code overlap:
+- Both use Claude Sonnet for candidate analysis
+- Both rank candidates with strengths/gaps
+- Both generate evidence-based recommendations
+- Both support Greek/English bilingual output
+
+**Decision**: MERGE into single unified module (`hr_intelligence/`).
+
+**Created Unified Design Document**:
+- **File**: `docs/HR-INTELLIGENCE-UNIFIED.md` (~800 lines)
+- **Supersedes**:
+  - `docs/HR-INTELLIGENCE-ANALYZER.md` (deprecated)
+  - `docs/JOB-MATCHING-SIMPLE.md` (deprecated)
+
+**Unified Architecture**:
+```
+INPUT (query OR job posting)
+    │
+    ▼
+PHASE 1: Input Processing
+    ├─ Query Translator (existing)
+    └─ Job Posting Parser (new)
+    │
+    ▼
+PHASE 2: Candidate Retrieval
+    ├─ Strict SQL query
+    └─ Relaxed matching (if 0 results)
+    │
+    ▼
+PHASE 3: HR Intelligence (Claude Sonnet)
+    Single LLM call for analysis
+    │
+    ▼
+PHASE 4: API Response
+    Raw candidates + HR analysis report
+```
+
+**Implementation Plan**:
+| Phase | Description | Hours |
+|-------|-------------|-------|
+| 1 | HR Intelligence Core | 16.5h |
+| 2 | Job Posting Parser | 9h |
+| 3 | Query Lambda Integration | 9h |
+| 4 | Dynamic Taxonomy Aliases | 7h |
+| 5 | Testing & Refinement | 11h |
+| **Total** | | **52.5h** |
+
+**Cost Optimization**: ~$0.016/query (unified) vs $0.10/query (old separate design)
+
+**Files Created**:
+- `docs/HR-INTELLIGENCE-UNIFIED.md` - Unified design document
+
+**Current State**:
+| Item | Value |
+|------|-------|
+| Lambda Layer | v51 |
+| PostgreSQL | 31 candidates |
+| OpenSearch | 31 documents |
+| GitLab | Synced |
+| GitHub | Synced |
+
+---
 
 ### 2026-01-20 (Session 37) - Software Search Fix & Job Matching SQL Enhancement
 
