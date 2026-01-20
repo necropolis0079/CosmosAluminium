@@ -28,6 +28,14 @@ Benefits:
 See docs/14-LLM-ABSTRACTION.md for full specification.
 """
 
+from .dynamic_aliases import (
+    AliasCache,
+    AliasEntry,
+    DynamicAliasLoader,
+    get_global_loader,
+    load_aliases_sync,
+    normalize_text,
+)
 from .query_router import QueryRouter, route_query
 from .query_translator import QueryTranslator, translate_query
 from .schema import (
@@ -51,10 +59,16 @@ __all__ = [
     "QueryTranslator",
     "SQLGenerator",
     "QueryRouter",
+    # Dynamic aliases (Phase 4)
+    "DynamicAliasLoader",
+    "AliasEntry",
+    "AliasCache",
     # Convenience functions
     "translate_query",
     "generate_sql",
     "route_query",
+    "load_aliases_sync",
+    "get_global_loader",
     # Dataclasses
     "QueryTranslation",
     "SQLQuery",
@@ -67,7 +81,8 @@ __all__ = [
     "SortDirection",
     # Utilities
     "normalize_greek",
-    # Mappings
+    "normalize_text",
+    # Mappings (static - for fallback)
     "FILTER_FIELD_MAPPING",
     "GREEK_ALIASES",
     "LOCATION_ALIASES",
