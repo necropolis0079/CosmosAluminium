@@ -544,7 +544,7 @@ function renderCandidateCard(data, processingTime) {
     const personal = cv.personal || {};
 
     return `
-        <div class="candidate-card">
+        <div class="extraction-result">
             <div class="candidate-header">
                 <div class="candidate-info">
                     <h2>${escapeHtml(personal.first_name || '')} ${escapeHtml(personal.last_name || '')}</h2>
@@ -782,10 +782,10 @@ async function sendChatMessage() {
     chatInput.value = '';
 
     try {
-        const response = await fetch(`${API_BASE}/query`, {
+        const response = await fetch(`${API_BASE}/test/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: message })
+            body: JSON.stringify({ query: message, execute: true, limit: 50 })
         });
 
         if (!response.ok) throw new Error('Query failed');
@@ -807,9 +807,33 @@ function appendChatMessage(type, content) {
 
 function formatQueryResponse(data) {
     if (data.error) return `Error: ${data.error}`;
-    if (data.results && data.results.length > 0) {
-        return `Found ${data.results.length} candidates:<br>${data.results.map(r => `- ${r.name || 'Unknown'}`).join('<br>')}`;
+
+    // Handle clarification requests
+    if (data.clarification?.needed) {
+        let response = data.clarification.question || 'Could you provide more details?';
+        if (data.clarification.suggestions?.length > 0) {
+            response += '<br><br><strong>Suggestions:</strong><br>';
+            response += data.clarification.suggestions.map(s => `• ${s}`).join('<br>');
+        }
+        return response;
     }
+
+    // Handle SQL results
+    if (data.results && data.results.length > 0) {
+        const candidates = data.results.map(r => {
+            const name = r.first_name && r.last_name
+                ? `${r.first_name} ${r.last_name}`
+                : r.name || 'Unknown';
+            return `• <strong>${name}</strong>${r.email ? ` (${r.email})` : ''}`;
+        });
+        return `Found <strong>${data.results.length}</strong> candidates:<br><br>${candidates.join('<br>')}`;
+    }
+
+    // Handle SQL query info
+    if (data.sql) {
+        return `Query executed. ${data.row_count || 0} results found.`;
+    }
+
     return data.message || 'No results found.';
 }
 

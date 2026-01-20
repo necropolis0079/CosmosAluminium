@@ -64,6 +64,7 @@ resource "null_resource" "lcmgo_package_layer_build" {
     parser_taxonomy       = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/taxonomy_mapper.py")
     parser_db_writer      = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/db_writer.py")
     parser_search_indexer = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/search_indexer.py")
+    parser_validators     = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/validators.py")
 
     # Query module
     query_init       = filemd5("${path.module}/../../src/lcmgo_cagenai/query/__init__.py")
@@ -71,6 +72,13 @@ resource "null_resource" "lcmgo_package_layer_build" {
     query_translator = filemd5("${path.module}/../../src/lcmgo_cagenai/query/query_translator.py")
     query_sql_gen    = filemd5("${path.module}/../../src/lcmgo_cagenai/query/sql_generator.py")
     query_router     = filemd5("${path.module}/../../src/lcmgo_cagenai/query/query_router.py")
+
+    # Prompts (embedded in code but tracked for rebuilds)
+    prompt_cv_parsing = filemd5("${path.module}/../../prompts/cv_parsing/v1.0.0.txt")
+
+    # Manual version bump - increment to force layer rebuild
+    # Last updated: 2026-01-20 (Session 36 - added training support)
+    layer_version = "38"
   }
 
   provisioner "local-exec" {
@@ -105,12 +113,21 @@ resource "aws_lambda_layer_version" "lcmgo_package" {
   layer_name          = "lcmgo-cagenai-prod-lcmgo-package"
   description         = "LCMGoCloud CA GenAI source package"
   compatible_runtimes = ["python3.11", "python3.12"]
+  source_code_hash    = filebase64sha256("${path.module}/../../lambda/cv_processor/lcmgo_package_layer.zip")
 
   depends_on = [null_resource.lcmgo_package_layer_build]
 
   lifecycle {
     create_before_destroy = true
   }
+}
+
+# Data source to always get the latest published layer version
+# Use this in Lambda functions to avoid version drift
+data "aws_lambda_layer_version" "lcmgo_package_latest" {
+  layer_name = "lcmgo-cagenai-prod-lcmgo-package"
+
+  depends_on = [aws_lambda_layer_version.lcmgo_package]
 }
 
 # -----------------------------------------------------------------------------
@@ -143,7 +160,7 @@ resource "aws_lambda_function" "cv_processor" {
 
   layers = [
     aws_lambda_layer_version.cv_processor.arn,
-    aws_lambda_layer_version.lcmgo_package.arn,
+    data.aws_lambda_layer_version.lcmgo_package_latest.arn,
     data.aws_lambda_layer_version.tesseract.arn,
   ]
 

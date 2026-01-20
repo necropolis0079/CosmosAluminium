@@ -24,12 +24,12 @@ resource "aws_lambda_function" "cv_parser" {
   role             = aws_iam_role.lambda_execution.arn
   handler          = "handler.handler"
   runtime          = "python3.11"
-  timeout          = 300 # 5 minutes for Claude API calls
+  timeout          = 600 # 10 minutes for Claude API + taxonomy mapping
   memory_size      = 1024
 
-  # Use existing layers
+  # Use latest layer versions (data sources to avoid version drift)
   layers = [
-    aws_lambda_layer_version.lcmgo_package.arn,
+    data.aws_lambda_layer_version.lcmgo_package_latest.arn,
     aws_lambda_layer_version.pg8000.arn,
     aws_lambda_layer_version.opensearch.arn,
   ]

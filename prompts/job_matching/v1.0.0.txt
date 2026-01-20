@@ -1,0 +1,134 @@
+# Job Matching Prompt v1.0.0
+# Used by JobMatcher to analyze candidates against job requirements
+
+## REQUIREMENT EXTRACTION PROMPT
+
+Use this prompt with Claude Haiku to extract structured requirements from natural language queries:
+
+```
+Analyze this job search query and extract structured requirements.
+
+Query: "{query}"
+
+Return ONLY valid JSON (no markdown, no explanation):
+{
+  "role": "accountant|engineer|manager|null if not specified",
+  "experience_years": 5,
+  "software": ["Excel", "SAP"],
+  "languages": ["en", "el"],
+  "certifications": [],
+  "skills": [],
+  "location": "city or null"
+}
+
+IMPORTANT:
+- Use null for unspecified fields
+- For languages, use ISO codes: en=English, el=Greek, de=German, fr=French
+- For software, preserve original names (SAP, Excel, ERP, etc.)
+- Extract numbers from text like "πάνω από 5 χρόνια" → 5
+- Greek translations:
+  - λογιστής → accountant
+  - μηχανικός → engineer
+  - διευθυντής → manager
+  - γραμματέας → secretary
+  - τεχνικός → technician
+  - πωλητής → salesperson
+```
+
+## CANDIDATE ANALYSIS PROMPT
+
+Use this prompt with Claude Sonnet to analyze individual candidates:
+
+```
+Analyze this candidate against job requirements. Respond in Greek.
+
+REQUIREMENTS:
+- Role: {role or 'Not specified'}
+- Experience: {experience_years or 'Not specified'} years minimum
+- Software: {software list or 'Not specified'}
+- Languages: {languages list or 'Not specified'}
+- Certifications: {certifications list or 'Not specified'}
+
+CANDIDATE DATA:
+{candidate_json}
+
+SQL PRE-MATCH DATA:
+{sql_match_data}
+
+Return ONLY valid JSON (no markdown):
+{
+  "match_level": "Υψηλή|Μέτρια|Χαμηλή",
+  "match_percentage": 75,
+  "matched": [
+    {"requirement": "Λογιστική εμπειρία", "value": "8 χρόνια", "source": "Επαγγελματική Εμπειρία"}
+  ],
+  "missing": [
+    {"requirement": "SAP ERP", "alternative": "Έχει Softone ERP - παρόμοιο σύστημα", "severity": "minor"}
+  ],
+  "comment": "Σύντομο σχόλιο για την καταλληλότητα...",
+  "recommendation": "interview|consider|skip"
+}
+
+RULES:
+- Υψηλή: 70%+ of requirements matched
+- Μέτρια: 40-70% matched
+- Χαμηλή: <40% matched
+- Be specific about what matches and what's missing
+- Suggest alternatives for missing requirements:
+  - Similar software (Softone ≈ SAP ≈ Oracle ERP)
+  - Related experience (accounting ≈ finance)
+  - Transferable skills
+- Reference specific CV sections in "source" field
+- severity: "minor" = easy to address, "major" = significant gap
+```
+
+## GREEK LANGUAGE MAPPINGS
+
+### Roles (Greek → English)
+- λογιστής, λογίστρια → accountant
+- μηχανικός → engineer
+- διευθυντής, διευθύντρια → manager
+- γραμματέας → secretary
+- τεχνικός → technician
+- πωλητής, πωλήτρια → salesperson
+- υπάλληλος γραφείου → office clerk
+- αποθηκάριος → warehouse worker
+- οδηγός → driver
+- φύλακας → security guard
+
+### Languages (Greek → ISO)
+- αγγλικά → en
+- ελληνικά → el
+- γερμανικά → de
+- γαλλικά → fr
+- ιταλικά → it
+- ισπανικά → es
+
+### Software Categories (for similarity matching)
+- ERP Systems: SAP, Softone, Oracle ERP, Microsoft Dynamics, Entersoft
+- Office: Excel, Word, PowerPoint, Outlook
+- Accounting: Singular, Epsilon Net, Atlantis, Softone
+- CAD: AutoCAD, SolidWorks, CATIA
+
+## MATCH LEVEL CRITERIA
+
+### Υψηλή (High) - 70%+ match
+- Exact or better on critical requirements (role, experience)
+- Has most software/skills requested
+- Minor gaps only (easy to address)
+
+### Μέτρια (Medium) - 40-70% match
+- Close on critical requirements
+- Has related experience
+- Some training/adaptation needed
+
+### Χαμηλή (Low) - <40% match
+- Missing critical requirements
+- Significant gaps
+- Major training/development needed
+
+## RECOMMENDATION LOGIC
+
+- **interview**: Υψηλή match OR (Μέτρια + minor gaps only)
+- **consider**: Μέτρια match with some potential
+- **skip**: Χαμηλή match OR major critical gaps

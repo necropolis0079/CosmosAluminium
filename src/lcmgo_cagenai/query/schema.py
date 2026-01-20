@@ -51,6 +51,13 @@ class SortOrder:
     field: str
     direction: SortDirection = SortDirection.DESC
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for serialization."""
+        return {
+            "field": self.field,
+            "direction": self.direction.value
+        }
+
 
 @dataclass
 class FilterCondition:

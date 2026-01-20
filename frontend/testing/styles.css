@@ -931,8 +931,12 @@ body {
 }
 
 /* =============================================================================
-   CANDIDATE CARD
+   EXTRACTION RESULT CARD (Results Page)
    ============================================================================= */
+.extraction-result {
+    display: block;
+}
+
 .candidate-header {
     display: flex;
     justify-content: space-between;

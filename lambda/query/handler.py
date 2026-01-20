@@ -7,6 +7,7 @@ Translates natural language HR queries (Greek/English) into PostgreSQL queries.
 Supports:
 - Direct invocation (from other Lambdas)
 - API Gateway integration (POST /query)
+- Intelligent job matching fallback when strict query returns 0 results
 
 Environment Variables:
     - DB_SECRET_ARN: RDS credentials secret ARN (for SQL execution)
@@ -21,9 +22,23 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import boto3
+
+
+class JSONEncoderWithUUID(json.JSONEncoder):
+    """Custom JSON encoder that handles UUID and Decimal types."""
+
+    def default(self, obj):
+        if isinstance(obj, uuid.UUID):
+            return str(obj)
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        return super().default(obj)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -99,6 +114,30 @@ def handler(event: dict, context: Any) -> dict:
         result = asyncio.get_event_loop().run_until_complete(
             process_query(user_query, execute, limit, query_context)
         )
+
+        # Check if we need job matching fallback
+        # If execute=True and (result_count=0 or execution_error), try intelligent matching
+        use_job_matching = body.get("use_job_matching", True)  # Default: enabled
+        needs_fallback = (
+            result.get("result_count", -1) == 0 or
+            "execution_error" in result
+        )
+        if (execute and
+            use_job_matching and
+            needs_fallback and
+            result.get("query_type") == "structured"):
+
+            logger.info("No results or error from strict query, falling back to job matching")
+            try:
+                job_match_result = run_job_matching(user_query, limit)
+                if job_match_result and job_match_result.get("total_found", 0) > 0:
+                    # Combine results
+                    result["job_matching"] = job_match_result
+                    result["fallback_used"] = True
+                    logger.info(f"Job matching found {job_match_result.get('total_found')} candidates")
+            except Exception as e:
+                logger.warning(f"Job matching fallback failed: {e}")
+                result["job_matching_error"] = str(e)
 
         # Add request metadata
         result["request_id"] = request_id
@@ -284,6 +323,77 @@ async def execute_sql(query: str, params: list, limit: int) -> list[dict]:
 
     finally:
         cursor.close()
+        conn.close()
+
+
+def run_job_matching(query: str, limit: int = 10) -> dict | None:
+    """
+    Run intelligent job matching for queries that return 0 results.
+
+    Uses the JobMatcher to find candidates matching MOST criteria.
+
+    Args:
+        query: Natural language query
+        limit: Maximum candidates to return
+
+    Returns:
+        Job matching result dict or None on failure
+    """
+    global _db_credentials
+
+    try:
+        import pg8000
+        from lcmgo_cagenai.matching import JobMatcher, ResponseFormatter
+        from lcmgo_cagenai.llm import BedrockProvider
+    except ImportError as e:
+        logger.error(f"Failed to import job matching modules: {e}")
+        return None
+
+    # Get credentials if needed
+    if _db_credentials is None and DB_SECRET_ARN:
+        secret_response = secrets_client.get_secret_value(SecretId=DB_SECRET_ARN)
+        _db_credentials = json.loads(secret_response["SecretString"])
+
+    if not _db_credentials:
+        logger.error("No database credentials available for job matching")
+        return None
+
+    # Create database connection
+    conn = pg8000.connect(
+        host=_db_credentials["host"],
+        port=int(_db_credentials.get("port", 5432)),
+        database=_db_credentials.get("dbname", "cagenai"),
+        user=_db_credentials["username"],
+        password=_db_credentials["password"],
+        ssl_context=True,
+    )
+
+    try:
+        # Create LLM provider
+        llm = BedrockProvider(region=AWS_REGION)
+
+        # Create job matcher
+        matcher = JobMatcher(db_connection=conn, llm_provider=llm)
+
+        # Run matching
+        result = matcher.match(query, limit=limit)
+
+        # Format as JSON
+        formatted = ResponseFormatter.format_as_json(result)
+
+        # Also include formatted text response
+        formatted["formatted_response"] = ResponseFormatter.format_match_result(result)
+
+        # Ensure all UUIDs and Decimals are serializable
+        # by round-tripping through JSON
+        formatted = json.loads(json.dumps(formatted, cls=JSONEncoderWithUUID))
+
+        return formatted
+
+    except Exception as e:
+        logger.error(f"Job matching failed: {e}")
+        return None
+    finally:
         conn.close()
 
 

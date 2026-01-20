@@ -28,9 +28,9 @@ resource "aws_lambda_function" "query" {
   timeout          = 60  # 1 minute for query translation + optional execution
   memory_size      = 512
 
-  # Use existing layers
+  # Use latest layer versions (data sources to avoid version drift)
   layers = [
-    aws_lambda_layer_version.lcmgo_package.arn,
+    data.aws_lambda_layer_version.lcmgo_package_latest.arn,
     aws_lambda_layer_version.pg8000.arn,
   ]
 

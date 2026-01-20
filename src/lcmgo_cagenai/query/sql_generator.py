@@ -371,6 +371,16 @@ FROM candidates c
       AND {column} = ANY({placeholder})
 )"""
 
+        elif operator == FilterOperator.CONTAINS.value:
+            # ILIKE search for partial matches (e.g., language codes)
+            search_value = value[0] if len(value) == 1 else value[0]
+            placeholder = self._next_param(f"%{search_value}%", "text")
+            return f"""EXISTS (
+    SELECT 1 FROM {table}
+    WHERE candidate_id = c.id
+      AND {column} ILIKE {placeholder}
+)"""
+
         self.warnings.append(f"Unsupported operator for {field}: {operator}")
         return None
 
@@ -414,10 +424,50 @@ FROM candidates c
             self.warnings.append(f"Unknown taxonomy field: {field}")
             return None
 
+        # Determine which name columns to use based on taxonomy table
+        # software_taxonomy has 'name', others have 'name_en' and 'name_el'
+        # Also search canonical_id to handle both SW_EXCEL and Excel patterns
+        if taxonomy_table == "software_taxonomy":
+            name_condition_template = f"({taxonomy_alias}.name ILIKE {{placeholder}} OR {taxonomy_alias}.canonical_id ILIKE {{placeholder}})"
+        else:
+            name_condition_template = f"({taxonomy_alias}.name_en ILIKE {{placeholder}} OR {taxonomy_alias}.name_el ILIKE {{placeholder}} OR {taxonomy_alias}.canonical_id ILIKE {{placeholder}})"
+
+        if operator == FilterOperator.CONTAINS.value:
+            # For contains, search by name (case-insensitive) instead of canonical_id
+            # This handles searches like "SAP" or "Excel" by name
+            search_value = value[0] if isinstance(value, list) and len(value) == 1 else value
+            if isinstance(search_value, str):
+                placeholder = self._next_param(f"%{search_value}%", "text")
+                name_condition = name_condition_template.format(placeholder=placeholder)
+                return f"""EXISTS (
+    SELECT 1 FROM {table} {alias}
+    JOIN {taxonomy_table} {taxonomy_alias} ON {alias}.{join_column} = {taxonomy_alias}.id
+    WHERE {alias}.candidate_id = c.id
+      AND {name_condition}
+)"""
+            # Fall through to ANY for non-string values
+
         placeholder = self._next_param(value, "text[]")
 
-        if operator == FilterOperator.ANY.value:
-            return f"""EXISTS (
+        if operator in (FilterOperator.ANY.value, FilterOperator.CONTAINS.value, FilterOperator.IN.value, FilterOperator.EQ.value):
+            # Search by name match (case-insensitive) for text values
+            if isinstance(value, list) and all(isinstance(v, str) for v in value):
+                # Build OR conditions for each search term
+                conditions = []
+                for v in value:
+                    p = self._next_param(f"%{v}%", "text")
+                    name_condition = name_condition_template.format(placeholder=p)
+                    conditions.append(name_condition)
+                or_clause = " OR ".join(conditions)
+                return f"""EXISTS (
+    SELECT 1 FROM {table} {alias}
+    JOIN {taxonomy_table} {taxonomy_alias} ON {alias}.{join_column} = {taxonomy_alias}.id
+    WHERE {alias}.candidate_id = c.id
+      AND ({or_clause})
+)"""
+            else:
+                # Fallback to canonical_id match for non-string values
+                return f"""EXISTS (
     SELECT 1 FROM {table} {alias}
     JOIN {taxonomy_table} {taxonomy_alias} ON {alias}.{join_column} = {taxonomy_alias}.id
     WHERE {alias}.candidate_id = c.id
