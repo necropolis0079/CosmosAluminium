@@ -257,6 +257,31 @@ IMPORTANT:
         finally:
             cursor.close()
 
+    # Domain knowledge for Greek market software/certification equivalencies
+    DOMAIN_KNOWLEDGE = """
+IMPORTANT DOMAIN KNOWLEDGE - Software Equivalencies:
+
+ERP Systems (all are equivalent for "ERP" requirement):
+- Greek: SoftOne, Singular (SingularLogic), Galaxy (Entersoft), Atlantis, Pylon (Epsilon), Pegasus, PRISMA Win
+- International: SAP, Oracle, Microsoft Dynamics, Navision, NetSuite, Odoo, Sage
+
+Office/Computer Skills (equivalent for "Office" or "Microsoft Office" requirement):
+- Microsoft Office, MS Office, Office 365, Excel, Word, PowerPoint, Outlook
+- Google Workspace (G Suite)
+- ECDL/ICDL certification = PROVES Office proficiency
+- MOS (Microsoft Office Specialist) = PROVES Office proficiency
+
+Accounting Software:
+- SoftOne, Singular, Galaxy, Epsilon, PRISMA Win are Greek accounting/ERP systems
+- QuickBooks, Xero, MYOB are international
+
+Certification Inferences:
+- ECDL = Microsoft Office proficiency (Excel, Word, PowerPoint, Outlook)
+- ICDL = Microsoft Office proficiency
+- MOS = Microsoft Office proficiency
+- CPA/ACCA/ΟΕΕ/ΣΟΕΛ = Professional accounting qualification
+"""
+
     def analyze_candidate(
         self,
         candidate_data: dict,
@@ -269,6 +294,8 @@ IMPORTANT:
         Returns detailed match analysis with evidence.
         """
         prompt = f"""Analyze this candidate against job requirements. Respond in Greek.
+
+{self.DOMAIN_KNOWLEDGE}
 
 REQUIREMENTS:
 - Role: {requirements.role or 'Not specified'}
@@ -294,10 +321,14 @@ RESPOND WITH VALID JSON ONLY. No markdown, no explanation. Ensure all strings ar
   "recommendation": "interview|consider|skip"
 }}
 
-RULES:
-- Υψηλή: 70%+ match, Μέτρια: 40-70%, Χαμηλή: <40%
-- Keep arrays short (max 3 items each)
-- Keep comment brief (under 100 characters)
+CRITICAL MATCHING RULES:
+1. If requirement is "ERP" and candidate has SoftOne/Singular/Galaxy/SAP → MATCHED (not missing!)
+2. If requirement is "Office" and candidate has ECDL/ICDL/MOS → MATCHED (certification proves proficiency)
+3. If requirement is "Excel" and candidate has ECDL → MATCHED
+4. Greek ERP systems (SoftOne, Singular, Galaxy) ARE enterprise ERP systems
+5. Υψηλή: 70%+ match, Μέτρια: 40-70%, Χαμηλή: <40%
+6. Keep arrays short (max 3 items each)
+7. Keep comment brief (under 100 characters)
 """
 
         try:
