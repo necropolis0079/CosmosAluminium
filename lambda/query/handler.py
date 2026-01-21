@@ -9,6 +9,7 @@ Supports:
 - API Gateway integration (POST /query)
 - Intelligent job matching fallback when strict query returns 0 results
 - HR Intelligence analysis for candidate evaluation (Phase 3)
+- Async mode for long-running HR analysis (avoids API Gateway 30s timeout)
 
 Environment Variables:
     - DB_SECRET_ARN: RDS credentials secret ARN (for SQL execution)
@@ -27,6 +28,9 @@ from decimal import Decimal
 from typing import Any
 
 import boto3
+
+# Lambda client for async invocation
+lambda_client = boto3.client("lambda")
 
 
 class JSONEncoderWithUUID(json.JSONEncoder):
@@ -69,7 +73,9 @@ def handler(event: dict, context: Any) -> dict:
         "execute": false,           // Optional: execute SQL and return results
         "limit": 50,                // Optional: limit results (default 50)
         "context": {},              // Optional: additional context
-        "include_hr_analysis": true // Optional: include HR Intelligence analysis (default: true)
+        "include_hr_analysis": true, // Optional: include HR Intelligence analysis (default: false)
+        "async_hr": true,           // Optional: run HR analysis asynchronously (returns job_id)
+        "job_id": "abc123"          // Optional: fetch async HR results by job_id
     }
 
     Event structure (API Gateway):
@@ -98,11 +104,50 @@ def handler(event: dict, context: Any) -> dict:
         limit = min(body.get("limit", 50), 500)  # Cap at 500
         query_context = body.get("context", {})
         include_hr_analysis = body.get("include_hr_analysis", False)  # Default: disabled (for fast 30s responses)
+        async_hr = body.get("async_hr", False)  # Run HR analysis asynchronously
+        job_id = body.get("job_id")  # Fetch async results by job_id
+        is_async_worker = body.get("_async_worker", False)  # Internal: marks async invocation
+
+        # If job_id provided, fetch and return async HR results
+        if job_id:
+            return _fetch_async_results(job_id, request_id)
 
         if not user_query:
             return _error_response(400, "Missing 'query' parameter", request_id)
 
         logger.info(f"Processing query: '{user_query[:100]}...' execute={execute}")
+
+        # Handle async worker mode - just run HR analysis on pre-fetched data
+        if is_async_worker:
+            logger.info(f"Async worker mode for job: {body.get('_job_id')}")
+            candidates = body.get("_candidates", [])
+            if candidates:
+                try:
+                    hr_analysis = run_hr_intelligence(
+                        user_query=user_query,
+                        candidates=candidates,
+                        translation=body.get("_translation", {}),
+                        direct_count=body.get("_direct_count", 0),
+                        total_count=body.get("_total_count", len(candidates)),
+                        relaxation_applied=body.get("_relaxation_applied", False),
+                    )
+                    if hr_analysis:
+                        _store_async_job(body["_job_id"], {
+                            "status": "completed",
+                            "completed_at": datetime.now(timezone.utc).isoformat(),
+                            "hr_analysis": hr_analysis,
+                        })
+                        logger.info(f"Async HR completed for job: {body['_job_id']}")
+                except Exception as e:
+                    logger.error(f"Async HR analysis failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    _store_async_job(body["_job_id"], {
+                        "status": "failed",
+                        "error": str(e),
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                    })
+            return _success_response({"status": "async_worker_done", "job_id": body.get("_job_id")})
 
         # Check cache first
         cached = _check_cache(user_query)
@@ -156,24 +201,72 @@ def handler(event: dict, context: Any) -> dict:
                     candidates_to_analyze = job_matching_candidates
 
             if candidates_to_analyze:
-                logger.info(f"Running HR Intelligence analysis on {len(candidates_to_analyze)} candidates")
-                hr_start_time = time.time()
-                try:
-                    hr_analysis = run_hr_intelligence(
-                        user_query=user_query,
+                # Async mode: return immediately and process HR in background
+                if async_hr and not is_async_worker:
+                    logger.info(f"Starting async HR analysis for {len(candidates_to_analyze)} candidates")
+                    hr_job_id = f"hr-{request_id}"
+
+                    # Store initial results in DynamoDB
+                    _store_async_job(hr_job_id, {
+                        "status": "processing",
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                        "query": user_query,
+                        "candidate_count": len(candidates_to_analyze),
+                    })
+
+                    # Invoke Lambda asynchronously for HR analysis
+                    _invoke_async_hr(
+                        query=user_query,
                         candidates=candidates_to_analyze,
                         translation=result.get("translation", {}),
                         direct_count=result.get("result_count", 0) if not relaxation_applied else 0,
                         total_count=len(candidates_to_analyze),
                         relaxation_applied=relaxation_applied,
+                        job_id=hr_job_id,
                     )
-                    if hr_analysis:
-                        result["hr_analysis"] = hr_analysis
-                        result["hr_analysis"]["latency_ms"] = int((time.time() - hr_start_time) * 1000)
-                        logger.info(f"HR analysis completed in {result['hr_analysis']['latency_ms']}ms")
-                except Exception as e:
-                    logger.warning(f"HR Intelligence analysis failed: {e}")
-                    result["hr_analysis_error"] = str(e)
+
+                    result["hr_job_id"] = hr_job_id
+                    result["hr_status"] = "processing"
+                    logger.info(f"Async HR job started: {hr_job_id}")
+                else:
+                    # Sync mode: run HR analysis now
+                    logger.info(f"Running HR Intelligence analysis on {len(candidates_to_analyze)} candidates")
+                    hr_start_time = time.time()
+                    try:
+                        hr_analysis = run_hr_intelligence(
+                            user_query=user_query,
+                            candidates=candidates_to_analyze,
+                            translation=result.get("translation", {}),
+                            direct_count=result.get("result_count", 0) if not relaxation_applied else 0,
+                            total_count=len(candidates_to_analyze),
+                            relaxation_applied=relaxation_applied,
+                        )
+                        if hr_analysis:
+                            result["hr_analysis"] = hr_analysis
+                            result["hr_analysis"]["latency_ms"] = int((time.time() - hr_start_time) * 1000)
+                            logger.info(f"HR analysis completed in {result['hr_analysis']['latency_ms']}ms")
+
+                            # If this is async worker, store results
+                            if is_async_worker and body.get("_job_id"):
+                                _store_async_job(body["_job_id"], {
+                                    "status": "completed",
+                                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                                    "hr_analysis": hr_analysis,
+                                })
+                                logger.info(f"Async HR results stored for job: {body['_job_id']}")
+                    except Exception as e:
+                        logger.warning(f"HR Intelligence analysis failed: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        result["hr_analysis_error"] = str(e)
+
+                        # Store error if async worker
+                        if is_async_worker and body.get("_job_id"):
+                            _store_async_job(body["_job_id"], {
+                                "status": "failed",
+                                "error": str(e),
+                                "completed_at": datetime.now(timezone.utc).isoformat(),
+                            })
             else:
                 logger.info("No candidates to analyze for HR Intelligence")
 
@@ -654,6 +747,109 @@ def _generate_suggestions(translation) -> list[str]:
         ])
 
     return suggestions
+
+
+# =============================================================================
+# ASYNC HR ANALYSIS HELPERS
+# =============================================================================
+
+def _fetch_async_results(job_id: str, request_id: str) -> dict:
+    """Fetch async HR analysis results by job_id."""
+    try:
+        table = dynamodb.Table(QUERY_CACHE_TABLE)
+        response = table.get_item(Key={"cache_key": f"async:{job_id}"})
+
+        if "Item" not in response:
+            return _error_response(404, f"Job not found: {job_id}", request_id)
+
+        item = response["Item"]
+        status = item.get("status", "unknown")
+
+        result = {
+            "job_id": job_id,
+            "status": status,
+            "request_id": request_id,
+        }
+
+        if status == "completed":
+            result["hr_analysis"] = item.get("hr_analysis", {})
+        elif status == "failed":
+            result["error"] = item.get("error", "Unknown error")
+        elif status == "processing":
+            result["started_at"] = item.get("started_at")
+            result["candidate_count"] = item.get("candidate_count", 0)
+
+        return _success_response(result)
+
+    except Exception as e:
+        logger.error(f"Failed to fetch async results: {e}")
+        return _error_response(500, f"Failed to fetch results: {e}", request_id)
+
+
+def _store_async_job(job_id: str, data: dict) -> None:
+    """Store async job data in DynamoDB."""
+    try:
+        table = dynamodb.Table(QUERY_CACHE_TABLE)
+
+        item = {
+            "cache_key": f"async:{job_id}",
+            "job_id": job_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "ttl": int(time.time()) + 3600,  # 1 hour TTL
+            **data,
+        }
+
+        # Convert any nested dicts/lists that might have non-DynamoDB types
+        item = json.loads(json.dumps(item, default=str))
+
+        table.put_item(Item=item)
+        logger.info(f"Stored async job: {job_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to store async job: {e}")
+
+
+def _invoke_async_hr(
+    query: str,
+    candidates: list,
+    translation: dict,
+    direct_count: int,
+    total_count: int,
+    relaxation_applied: bool,
+    job_id: str,
+) -> None:
+    """Invoke Lambda asynchronously for HR analysis."""
+    try:
+        function_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "lcmgo-cagenai-prod-query")
+
+        payload = {
+            "query": query,
+            "execute": True,
+            "include_hr_analysis": True,
+            "_async_worker": True,  # Mark as async worker
+            "_job_id": job_id,
+            "_candidates": candidates,
+            "_translation": translation,
+            "_direct_count": direct_count,
+            "_total_count": total_count,
+            "_relaxation_applied": relaxation_applied,
+        }
+
+        lambda_client.invoke(
+            FunctionName=function_name,
+            InvocationType="Event",  # Async invocation
+            Payload=json.dumps(payload, default=str),
+        )
+
+        logger.info(f"Async HR invocation triggered for job: {job_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to invoke async HR: {e}")
+        # Store failure in DynamoDB
+        _store_async_job(job_id, {
+            "status": "failed",
+            "error": f"Failed to start async processing: {e}",
+        })
 
 
 def _success_response(data: dict) -> dict:

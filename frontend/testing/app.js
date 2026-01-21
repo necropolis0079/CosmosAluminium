@@ -774,6 +774,42 @@ function initChat() {
     });
 }
 
+async function pollForHrResults(jobId, timeout = 120000) {
+    const startTime = Date.now();
+    const pollInterval = 3000; // Poll every 3 seconds
+
+    while (Date.now() - startTime < timeout) {
+        try {
+            const response = await fetch(`${API_BASE}/test/query`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ job_id: jobId })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.status === 'completed') {
+                    return data;
+                } else if (data.status === 'failed') {
+                    return { error: data.error || 'HR analysis failed' };
+                }
+                // Still processing, update timer
+                const timerEl = document.getElementById('loading-time');
+                if (timerEl) {
+                    timerEl.textContent = Math.floor((Date.now() - startTime) / 1000);
+                }
+            }
+        } catch (e) {
+            console.error('Poll error:', e);
+        }
+
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    return { error: 'Timeout waiting for HR analysis' };
+}
+
 async function sendChatMessage() {
     const message = chatInput.value.trim();
     if (!message) return;
@@ -857,7 +893,13 @@ async function sendChatMessage() {
         const response = await fetch(`${API_BASE}/test/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: message, execute: true, limit: 50, include_hr_analysis: includeHrAnalysis }),
+            body: JSON.stringify({
+                query: message,
+                execute: true,
+                limit: 50,
+                include_hr_analysis: includeHrAnalysis,
+                async_hr: includeHrAnalysis  // Use async mode when HR analysis is enabled
+            }),
             signal: controller.signal
         });
 
@@ -870,7 +912,22 @@ async function sendChatMessage() {
             throw new Error(`Query failed: ${response.status}`);
         }
 
-        const data = await response.json();
+        let data = await response.json();
+
+        // If async HR analysis was started, poll for results
+        if (data.hr_job_id && data.hr_status === 'processing') {
+            // Update loading message
+            loadingDiv.querySelector('.step-text').textContent = '🤖 HR Intelligence ανάλυση σε εξέλιξη...';
+
+            // Poll for HR results
+            const hrResults = await pollForHrResults(data.hr_job_id, 120000); // 2 minute timeout
+            if (hrResults && hrResults.hr_analysis) {
+                data.hr_analysis = hrResults.hr_analysis;
+            } else if (hrResults && hrResults.error) {
+                data.hr_analysis_error = hrResults.error;
+            }
+        }
+
         loadingDiv.remove();
         appendChatMessage('assistant', formatQueryResponse(data));
     } catch (error) {
