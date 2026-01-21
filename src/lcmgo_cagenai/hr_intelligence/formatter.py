@@ -246,6 +246,22 @@ def format_api_response(
     """
     result = report.to_dict()
 
+    # Add recommendation field to each ranked candidate for frontend tab categorization
+    # TOP 5 candidates by rank → "interview" (recommended for interview)
+    # Remaining candidates → "consider" (worth considering)
+    ranked_candidates = result.get("ranked_candidates", [])
+    for i, rc in enumerate(ranked_candidates):
+        rank = rc.get("rank", i + 1)
+        suitability = rc.get("overall_suitability", "").lower()
+        match_pct = rc.get("match_percentage", 0)
+
+        # Top 5 candidates always go to "interview" tab
+        # OR any candidate with High suitability / >=70% match
+        if rank <= 5 or suitability in ("high", "υψηλή") or match_pct >= 70:
+            rc["recommendation"] = "interview"
+        else:
+            rc["recommendation"] = "consider"
+
     if include_text_summary:
         result["text_summary"] = format_text_report(report)
 

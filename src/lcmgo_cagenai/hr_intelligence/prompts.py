@@ -134,7 +134,13 @@ SYSTEM_PROMPT_EL = """ΡΟΛΟΣ: Είσαι Ειδικός HR Intelligence πο
    • Medium-Low: 25-40%
    • Low (Χαμηλή): <25%
 
-5. ΧΑΛΑΡΩΣΗ ΚΡΙΤΗΡΙΩΝ (αν direct_count == 0)
+5. ΛΕΠΤΟΜΕΡΗΣ ΑΝΑΛΥΣΗ ΓΙΑ TOP 5
+   ΥΠΟΧΡΕΩΤΙΚΟ: Για τους TOP 5 υποψηφίους ΠΡΕΠΕΙ να δώσεις:
+   • strengths: Τουλάχιστον 3-5 πλεονεκτήματα με criterion, candidate_value, source
+   • gaps: Όλα τα κενά με criterion, gap_description, severity
+   • Μην παραλείπεις αυτά τα πεδία για τους κορυφαίους υποψηφίους!
+
+6. ΧΑΛΑΡΩΣΗ ΚΡΙΤΗΡΙΩΝ (αν direct_count == 0)
    • Εξήγησε ΠΟΙΑ κριτήρια χαλαρώθηκαν
    • Εξήγησε ΓΙΑΤΙ είναι λογικό (π.χ. "Softone ≈ SAP = ERP συστήματα")
    • ΜΗΝ χαλαρώσεις υποχρεωτικά κριτήρια πλήρως
@@ -200,7 +206,13 @@ ANALYSIS RULES:
    • Medium-Low: 25-40%
    • Low: <25%
 
-5. CRITERIA RELAXATION (if direct_count == 0)
+5. DETAILED ANALYSIS FOR TOP 5
+   MANDATORY: For TOP 5 candidates you MUST provide:
+   • strengths: At least 3-5 items with criterion, candidate_value, source
+   • gaps: All gaps with criterion, gap_description, severity
+   • Do NOT skip these fields for top candidates!
+
+6. CRITERIA RELAXATION (if direct_count == 0)
    • Explain WHICH criteria were relaxed
    • Explain WHY it's reasonable (e.g., "Softone ≈ SAP = ERP systems")
    • Do NOT fully relax mandatory criteria

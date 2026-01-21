@@ -528,6 +528,187 @@ def run_job_matching(query: str, limit: int = 10) -> dict | None:
         conn.close()
 
 
+def enrich_candidates(candidate_ids: list[str]) -> dict[str, dict]:
+    """
+    Enrich candidate data by fetching full profiles from PostgreSQL.
+
+    Uses the get_candidate_full_profile() function to get complete data
+    including experience, skills, software, certifications, education, languages.
+
+    Args:
+        candidate_ids: List of candidate UUIDs
+
+    Returns:
+        Dictionary mapping candidate_id to transformed profile data
+        ready for CandidateProfile creation
+    """
+    global _db_credentials
+
+    if not candidate_ids:
+        return {}
+
+    try:
+        import pg8000
+    except ImportError:
+        logger.error("pg8000 not available for enrichment")
+        return {}
+
+    # Get credentials if needed
+    if _db_credentials is None and DB_SECRET_ARN:
+        secret_response = secrets_client.get_secret_value(SecretId=DB_SECRET_ARN)
+        _db_credentials = json.loads(secret_response["SecretString"])
+
+    if not _db_credentials:
+        logger.error("No database credentials available for enrichment")
+        return {}
+
+    conn = pg8000.connect(
+        host=_db_credentials["host"],
+        port=int(_db_credentials.get("port", 5432)),
+        database=_db_credentials.get("dbname", "cagenai"),
+        user=_db_credentials["username"],
+        password=_db_credentials["password"],
+        ssl_context=True,
+    )
+
+    enriched = {}
+    cursor = conn.cursor()
+
+    try:
+        for candidate_id in candidate_ids:
+            try:
+                cursor.execute(
+                    "SELECT get_candidate_full_profile(%s)",
+                    (candidate_id,)
+                )
+                result = cursor.fetchone()
+
+                if result and result[0]:
+                    raw_profile = result[0] if isinstance(result[0], dict) else json.loads(result[0])
+
+                    # Transform PostgreSQL function output to CandidateProfile format
+                    transformed = _transform_profile_for_hr(raw_profile)
+                    enriched[candidate_id] = transformed
+
+                    logger.debug(
+                        f"Enriched candidate {candidate_id}: "
+                        f"roles={len(transformed.get('roles', []))}, "
+                        f"software={len(transformed.get('software', []))}, "
+                        f"exp={transformed.get('total_experience_years', 0):.1f}y"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to enrich candidate {candidate_id}: {e}")
+                continue
+
+        logger.info(f"Enriched {len(enriched)} of {len(candidate_ids)} candidates")
+        return enriched
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def _transform_profile_for_hr(raw_profile: dict) -> dict:
+    """
+    Transform PostgreSQL get_candidate_full_profile() output to CandidateProfile format.
+
+    PostgreSQL returns:
+    - name: "First Last"
+    - experience: [{company, role, role_en, duration_months, ...}]
+    - skills: [{name, name_en, level}]
+    - software: [{name, level}]
+    - certifications: [{name, name_en, issuer, date}]
+    - languages: [{code, level}]
+    - education: [{institution, degree, field, level, graduation_year}]
+
+    CandidateProfile needs:
+    - first_name, last_name (separate)
+    - roles: list[str] (unique roles from experience)
+    - software: list[str] (just names)
+    - skills: list[str] (just names)
+    - certifications: list[str] (just names)
+    - languages: list[dict] (code, level)
+    - education: list[dict]
+    - experience_entries: list[dict]
+    """
+    # Split name
+    full_name = raw_profile.get("name", "")
+    name_parts = full_name.split(" ", 1) if full_name else ["", ""]
+    first_name = name_parts[0] if name_parts else ""
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
+
+    # Extract unique roles from experience
+    experience_list = raw_profile.get("experience") or []
+    roles = []
+    for exp in experience_list:
+        role = exp.get("role") or exp.get("role_en")
+        if role and role not in roles:
+            roles.append(role)
+
+    # Transform experience entries
+    experience_entries = []
+    for exp in experience_list:
+        experience_entries.append({
+            "role": exp.get("role") or exp.get("role_en", ""),
+            "company": exp.get("company", ""),
+            "duration_months": exp.get("duration_months", 0),
+            "start_date": exp.get("start_date"),
+            "end_date": exp.get("end_date"),
+            "description": exp.get("description"),
+        })
+
+    # Extract software names
+    software_list = raw_profile.get("software") or []
+    software = [s.get("name", "") for s in software_list if s.get("name")]
+
+    # Extract skill names
+    skills_list = raw_profile.get("skills") or []
+    skills = [s.get("name") or s.get("name_en", "") for s in skills_list if s.get("name") or s.get("name_en")]
+
+    # Extract certification names
+    certs_list = raw_profile.get("certifications") or []
+    certifications = [c.get("name") or c.get("name_en", "") for c in certs_list if c.get("name") or c.get("name_en")]
+
+    # Languages - keep code and level
+    languages_list = raw_profile.get("languages") or []
+    languages = [
+        {"code": lang.get("code", ""), "level": lang.get("level", "")}
+        for lang in languages_list
+        if lang.get("code")
+    ]
+
+    # Education - keep as is but normalize field names
+    education_list = raw_profile.get("education") or []
+    education = [
+        {
+            "institution": edu.get("institution", ""),
+            "degree": edu.get("degree", ""),
+            "field": edu.get("field", ""),
+            "level": edu.get("level", ""),
+            "graduation_year": edu.get("graduation_year"),
+        }
+        for edu in education_list
+    ]
+
+    return {
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": raw_profile.get("email"),
+        "phone": raw_profile.get("phone"),
+        "city": raw_profile.get("city"),
+        "region": raw_profile.get("region"),
+        "total_experience_years": raw_profile.get("total_experience_years", 0),
+        "roles": roles,
+        "software": software,
+        "skills": skills,
+        "soft_skills": [],  # Not in PostgreSQL function output
+        "certifications": certifications,
+        "languages": languages,
+        "education": education,
+        "experience_entries": experience_entries,
+    }
+
+
 def run_hr_intelligence(
     user_query: str,
     candidates: list[dict],
@@ -574,26 +755,38 @@ def run_hr_intelligence(
         # Create analyzer
         analyzer = HRIntelligenceAnalyzer(llm)
 
+        # CRITICAL: Enrich candidates with full profiles before analysis
+        # The SQL query only returns basic info (id, name, email)
+        # We need full profiles (experience, skills, software, certifications, etc.)
+        candidate_ids = [str(c.get("candidate_id", c.get("id", ""))) for c in candidates]
+        enriched_data = enrich_candidates(candidate_ids)
+        logger.info(f"Enriched {len(enriched_data)} candidates for HR analysis")
+
         # Convert raw candidate dictionaries to CandidateProfile objects
         candidate_profiles = []
         for c in candidates:
             try:
+                candidate_id = str(c.get("candidate_id", c.get("id", "")))
+
+                # Merge enriched data with original candidate data
+                enriched = enriched_data.get(candidate_id, {})
+
                 profile = CandidateProfile(
-                    candidate_id=str(c.get("candidate_id", c.get("id", ""))),
-                    first_name=c.get("first_name", ""),
-                    last_name=c.get("last_name", ""),
-                    email=c.get("email"),
-                    total_experience_years=_parse_float(c.get("total_experience_years")),
-                    roles=c.get("roles", []) if isinstance(c.get("roles"), list) else [],
-                    skills=c.get("skills", []) if isinstance(c.get("skills"), list) else [],
-                    soft_skills=c.get("soft_skills", []) if isinstance(c.get("soft_skills"), list) else [],
-                    software=c.get("software", []) if isinstance(c.get("software"), list) else [],
-                    certifications=c.get("certifications", []) if isinstance(c.get("certifications"), list) else [],
-                    languages=c.get("languages", []) if isinstance(c.get("languages"), list) else [],
-                    education=c.get("education", []) if isinstance(c.get("education"), list) else [],
-                    city=c.get("city") or c.get("current_location") or c.get("location"),
-                    region=c.get("region"),
-                    experience_entries=c.get("experience_entries", []) if isinstance(c.get("experience_entries"), list) else [],
+                    candidate_id=candidate_id,
+                    first_name=enriched.get("first_name") or c.get("first_name", ""),
+                    last_name=enriched.get("last_name") or c.get("last_name", ""),
+                    email=enriched.get("email") or c.get("email"),
+                    total_experience_years=_parse_float(enriched.get("total_experience_years") or c.get("total_experience_years")),
+                    roles=enriched.get("roles", []) if enriched.get("roles") else (c.get("roles", []) if isinstance(c.get("roles"), list) else []),
+                    skills=enriched.get("skills", []) if enriched.get("skills") else (c.get("skills", []) if isinstance(c.get("skills"), list) else []),
+                    soft_skills=enriched.get("soft_skills", []) if enriched.get("soft_skills") else (c.get("soft_skills", []) if isinstance(c.get("soft_skills"), list) else []),
+                    software=enriched.get("software", []) if enriched.get("software") else (c.get("software", []) if isinstance(c.get("software"), list) else []),
+                    certifications=enriched.get("certifications", []) if enriched.get("certifications") else (c.get("certifications", []) if isinstance(c.get("certifications"), list) else []),
+                    languages=enriched.get("languages", []) if enriched.get("languages") else (c.get("languages", []) if isinstance(c.get("languages"), list) else []),
+                    education=enriched.get("education", []) if enriched.get("education") else (c.get("education", []) if isinstance(c.get("education"), list) else []),
+                    city=enriched.get("city") or c.get("city") or c.get("current_location") or c.get("location") or c.get("address_city"),
+                    region=enriched.get("region") or c.get("region") or c.get("address_region"),
+                    experience_entries=enriched.get("experience_entries", []) if enriched.get("experience_entries") else (c.get("experience_entries", []) if isinstance(c.get("experience_entries"), list) else []),
                 )
                 candidate_profiles.append(profile)
             except Exception as e:
