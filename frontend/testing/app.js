@@ -781,12 +781,57 @@ async function sendChatMessage() {
     appendChatMessage('user', message);
     chatInput.value = '';
 
-    // Show loading indicator
+    // Show animated loading indicator with steps
     const loadingDiv = document.createElement('div');
     loadingDiv.className = 'message assistant loading';
-    loadingDiv.innerHTML = '<div class="message-content">⏳ Αναλύω το ερώτημά σας... (μπορεί να χρειαστούν 30-60 δευτερόλεπτα)</div>';
+    loadingDiv.innerHTML = `
+        <div class="message-content">
+            <div class="loading-steps">
+                <div class="loading-step active" id="step-translate">
+                    <span class="step-icon">🔄</span>
+                    <span class="step-text">Μετάφραση ερωτήματος...</span>
+                </div>
+                <div class="loading-step" id="step-search">
+                    <span class="step-icon">🔍</span>
+                    <span class="step-text">Αναζήτηση στη βάση δεδομένων...</span>
+                </div>
+                <div class="loading-step" id="step-analyze">
+                    <span class="step-icon">🤖</span>
+                    <span class="step-text">HR Intelligence ανάλυση υποψηφίων...</span>
+                </div>
+                <div class="loading-step" id="step-format">
+                    <span class="step-icon">📊</span>
+                    <span class="step-text">Προετοιμασία αποτελεσμάτων...</span>
+                </div>
+            </div>
+            <div class="loading-timer">Χρόνος: <span id="loading-time">0</span> δευτερόλεπτα</div>
+        </div>
+    `;
     chatMessages.appendChild(loadingDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // Animate steps
+    const steps = ['step-translate', 'step-search', 'step-analyze', 'step-format'];
+    let currentStep = 0;
+    const stepTimings = [2000, 4000, 25000, 30000]; // Expected timing for each step
+    let startTime = Date.now();
+
+    const stepInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        document.getElementById('loading-time').textContent = Math.floor(elapsed / 1000);
+
+        // Move to next step based on elapsed time
+        if (currentStep < steps.length - 1) {
+            let totalTime = 0;
+            for (let i = 0; i <= currentStep; i++) totalTime += stepTimings[i];
+            if (elapsed > totalTime) {
+                document.getElementById(steps[currentStep]).classList.remove('active');
+                document.getElementById(steps[currentStep]).classList.add('completed');
+                currentStep++;
+                document.getElementById(steps[currentStep]).classList.add('active');
+            }
+        }
+    }, 500);
 
     try {
         // Use AbortController with 180 second timeout for HR Intelligence analysis
@@ -801,6 +846,7 @@ async function sendChatMessage() {
         });
 
         clearTimeout(timeoutId);
+        clearInterval(stepInterval);
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -812,6 +858,7 @@ async function sendChatMessage() {
         loadingDiv.remove();
         appendChatMessage('assistant', formatQueryResponse(data));
     } catch (error) {
+        clearInterval(stepInterval);
         loadingDiv.remove();
         console.error('Query error:', error);
         if (error.name === 'AbortError') {

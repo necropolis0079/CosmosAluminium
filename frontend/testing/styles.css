@@ -3699,3 +3699,82 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
+
+/* =============================================================================
+   Loading Steps Animation
+   ============================================================================= */
+
+.loading-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    background: var(--bg-tertiary);
+    border-radius: 12px;
+    margin-bottom: 12px;
+}
+
+.loading-step {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    opacity: 0.5;
+    transition: all 0.3s ease;
+}
+
+.loading-step.active {
+    opacity: 1;
+    border-color: var(--accent);
+    background: rgba(230, 81, 0, 0.05);
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.loading-step.active .step-icon {
+    animation: pulse 1s infinite;
+}
+
+.loading-step.completed {
+    opacity: 0.7;
+    border-color: var(--success);
+    background: var(--success-bg);
+}
+
+.loading-step.completed .step-icon::after {
+    content: ' ✓';
+    color: var(--success);
+}
+
+.step-icon {
+    font-size: 20px;
+    min-width: 28px;
+    text-align: center;
+}
+
+.step-text {
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.loading-timer {
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 8px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+}
+
+.loading-timer span {
+    font-weight: 600;
+    color: var(--accent);
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+}
