@@ -351,6 +351,11 @@ body {
     display: block;
 }
 
+/* Query page full width for chat */
+#page-query {
+    max-width: 100%;
+}
+
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
@@ -1349,7 +1354,8 @@ body {
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    height: 500px;
+    height: calc(100vh - 200px); /* Full page height minus header/padding */
+    min-height: 500px;
 }
 
 .chat-messages {
@@ -1361,7 +1367,11 @@ body {
 
 .message {
     margin-bottom: 16px;
-    max-width: 80%;
+    max-width: 95%; /* Wider to accommodate tables */
+}
+
+.message.assistant {
+    max-width: 100%; /* Full width for results tables */
 }
 
 .message.user {
