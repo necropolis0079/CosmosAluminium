@@ -25,7 +25,7 @@ resource "aws_lambda_function" "query" {
   role             = aws_iam_role.lambda_execution.arn
   handler          = "handler.handler"
   runtime          = "python3.11"
-  timeout          = 60  # 1 minute for query translation + optional execution
+  timeout          = 180  # 3 minutes for query translation + SQL execution + HR analysis
   memory_size      = 512
 
   # Use latest layer versions (data sources to avoid version drift)
