@@ -41,6 +41,9 @@ resource "aws_lambda_layer_version" "cv_processor" {
 
 resource "null_resource" "lcmgo_package_layer_build" {
   triggers = {
+    # Root package
+    pkg_init = filemd5("${path.module}/../../src/lcmgo_cagenai/__init__.py")
+
     # OCR module
     ocr_init       = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/__init__.py")
     ocr_extractor  = filemd5("${path.module}/../../src/lcmgo_cagenai/ocr/extractor.py")
@@ -65,20 +68,34 @@ resource "null_resource" "lcmgo_package_layer_build" {
     parser_db_writer      = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/db_writer.py")
     parser_search_indexer = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/search_indexer.py")
     parser_validators     = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/validators.py")
+    parser_job_parser     = filemd5("${path.module}/../../src/lcmgo_cagenai/parser/job_parser.py")
 
     # Query module
-    query_init       = filemd5("${path.module}/../../src/lcmgo_cagenai/query/__init__.py")
-    query_schema     = filemd5("${path.module}/../../src/lcmgo_cagenai/query/schema.py")
-    query_translator = filemd5("${path.module}/../../src/lcmgo_cagenai/query/query_translator.py")
-    query_sql_gen    = filemd5("${path.module}/../../src/lcmgo_cagenai/query/sql_generator.py")
-    query_router     = filemd5("${path.module}/../../src/lcmgo_cagenai/query/query_router.py")
+    query_init            = filemd5("${path.module}/../../src/lcmgo_cagenai/query/__init__.py")
+    query_schema          = filemd5("${path.module}/../../src/lcmgo_cagenai/query/schema.py")
+    query_translator      = filemd5("${path.module}/../../src/lcmgo_cagenai/query/query_translator.py")
+    query_sql_gen         = filemd5("${path.module}/../../src/lcmgo_cagenai/query/sql_generator.py")
+    query_router          = filemd5("${path.module}/../../src/lcmgo_cagenai/query/query_router.py")
+    query_dynamic_aliases = filemd5("${path.module}/../../src/lcmgo_cagenai/query/dynamic_aliases.py")
+
+    # Matching module
+    matching_init       = filemd5("${path.module}/../../src/lcmgo_cagenai/matching/__init__.py")
+    matching_job        = filemd5("${path.module}/../../src/lcmgo_cagenai/matching/job_matcher.py")
+    matching_formatter  = filemd5("${path.module}/../../src/lcmgo_cagenai/matching/response_formatter.py")
+
+    # HR Intelligence module
+    hr_init      = filemd5("${path.module}/../../src/lcmgo_cagenai/hr_intelligence/__init__.py")
+    hr_schema    = filemd5("${path.module}/../../src/lcmgo_cagenai/hr_intelligence/schema.py")
+    hr_analyzer  = filemd5("${path.module}/../../src/lcmgo_cagenai/hr_intelligence/analyzer.py")
+    hr_prompts   = filemd5("${path.module}/../../src/lcmgo_cagenai/hr_intelligence/prompts.py")
+    hr_formatter = filemd5("${path.module}/../../src/lcmgo_cagenai/hr_intelligence/formatter.py")
 
     # Prompts (embedded in code but tracked for rebuilds)
     prompt_cv_parsing = filemd5("${path.module}/../../prompts/cv_parsing/v1.0.0.txt")
 
     # Manual version bump - increment to force layer rebuild
-    # Last updated: 2026-01-20 (Session 36 - added training support)
-    layer_version = "38"
+    # Last updated: 2026-01-21 (Session 41 - added Greek accounting terms to GREEK_ALIASES)
+    layer_version = "58"
   }
 
   provisioner "local-exec" {

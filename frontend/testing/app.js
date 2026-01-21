@@ -827,7 +827,12 @@ function formatQueryResponse(data) {
     // HR Intelligence Analysis (new feature)
     if (data.hr_analysis) {
         html += formatHRAnalysis(data.hr_analysis);
-    } else if (data.results && data.results.length > 0) {
+    }
+    // Job Matching fallback analysis (when SQL returns 0 results)
+    else if (data.job_matching && data.fallback_used) {
+        html += formatJobMatching(data.job_matching);
+    }
+    else if (data.results && data.results.length > 0) {
         // Fallback to simple results display if no HR analysis
         const candidates = data.results.map(r => {
             const name = r.first_name && r.last_name
@@ -840,7 +845,7 @@ function formatQueryResponse(data) {
             <ul>${candidates.join('')}</ul>
         </div>`;
     } else if (data.sql) {
-        html = `<div class="hr-info">Query executed. ${data.row_count || 0} results found.</div>`;
+        html = `<div class="hr-info">Query executed. ${data.result_count || 0} results found.</div>`;
     } else {
         html = `<div class="hr-info">${data.message || 'No results found.'}</div>`;
     }
@@ -851,6 +856,222 @@ function formatQueryResponse(data) {
     }
 
     return html;
+}
+
+// Format Job Matching results (when SQL returns 0 and fallback is used)
+function formatJobMatching(jm) {
+    let html = '<div class="jm-container">';
+
+    // Filter candidates: >= 50% match only
+    let allCandidates = (jm.candidates || []).filter(c => c.match_percentage >= 50);
+
+    // Limit to 20 candidates max
+    allCandidates = allCandidates.slice(0, 20);
+
+    // Separate by recommendation
+    const interviewCandidates = allCandidates.filter(c => c.recommendation === 'interview');
+    const considerCandidates = allCandidates.filter(c => c.recommendation === 'consider');
+
+    const totalFiltered = allCandidates.length;
+    const originalCount = (jm.candidates || []).length;
+    const excludedCount = originalCount - totalFiltered;
+
+    // Header with summary stats
+    html += `<div class="jm-header">
+        <div class="jm-header-content">
+            <div class="jm-header-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+            </div>
+            <div class="jm-header-text">
+                <h2 class="jm-title">Ανάλυση Υποψηφίων</h2>
+                <p class="jm-subtitle">${escapeHtml(jm.summary || 'Αποτελέσματα αξιολόγησης βάσει κριτηρίων')}</p>
+            </div>
+        </div>
+        <div class="jm-stats-row">
+            <div class="jm-stat-card">
+                <span class="jm-stat-number">${totalFiltered}</span>
+                <span class="jm-stat-text">Κατάλληλοι</span>
+            </div>
+            <div class="jm-stat-card accent">
+                <span class="jm-stat-number">${interviewCandidates.length}</span>
+                <span class="jm-stat-text">Για Συνέντευξη</span>
+            </div>
+            <div class="jm-stat-card warning">
+                <span class="jm-stat-number">${considerCandidates.length}</span>
+                <span class="jm-stat-text">Προς Εξέταση</span>
+            </div>
+            ${excludedCount > 0 ? `<div class="jm-stat-card muted">
+                <span class="jm-stat-number">${excludedCount}</span>
+                <span class="jm-stat-text">&lt;50% Ταίριασμα</span>
+            </div>` : ''}
+        </div>
+    </div>`;
+
+    // Tabbed interface
+    if (totalFiltered > 0) {
+        const hasInterview = interviewCandidates.length > 0;
+        const hasConsider = considerCandidates.length > 0;
+
+        html += `<div class="jm-tabs-container">
+            <div class="jm-tabs-nav">
+                <button class="jm-tab-btn ${hasInterview ? 'active' : ''}" onclick="switchJMTab(this, 'interview')" ${!hasInterview ? 'disabled' : ''}>
+                    <span class="jm-tab-icon">✅</span>
+                    <span class="jm-tab-label">Προτείνεται για Συνέντευξη</span>
+                    <span class="jm-tab-count">${interviewCandidates.length}</span>
+                </button>
+                <button class="jm-tab-btn ${!hasInterview && hasConsider ? 'active' : ''}" onclick="switchJMTab(this, 'consider')" ${!hasConsider ? 'disabled' : ''}>
+                    <span class="jm-tab-icon">🤔</span>
+                    <span class="jm-tab-label">Αξίζει να εξεταστεί</span>
+                    <span class="jm-tab-count">${considerCandidates.length}</span>
+                </button>
+            </div>
+
+            <div class="jm-tabs-content">
+                <div class="jm-tab-panel ${hasInterview ? 'active' : ''}" data-tab="interview">
+                    ${interviewCandidates.length > 0
+                        ? `<div class="jm-candidates-grid">${interviewCandidates.map((c, i) => formatJobMatchCandidateCard(c, i + 1)).join('')}</div>`
+                        : '<div class="jm-empty-tab"><span class="jm-empty-icon">📋</span><p>Δεν υπάρχουν υποψήφιοι σε αυτή την κατηγορία</p></div>'
+                    }
+                </div>
+                <div class="jm-tab-panel ${!hasInterview && hasConsider ? 'active' : ''}" data-tab="consider">
+                    ${considerCandidates.length > 0
+                        ? `<div class="jm-candidates-grid">${considerCandidates.map((c, i) => formatJobMatchCandidateCard(c, i + 1)).join('')}</div>`
+                        : '<div class="jm-empty-tab"><span class="jm-empty-icon">📋</span><p>Δεν υπάρχουν υποψήφιοι σε αυτή την κατηγορία</p></div>'
+                    }
+                </div>
+            </div>
+        </div>`;
+    } else {
+        html += `<div class="jm-no-results">
+            <span class="jm-no-results-icon">🔍</span>
+            <h3>Δεν βρέθηκαν κατάλληλοι υποψήφιοι</h3>
+            <p>Κανένας υποψήφιος δεν πληροί τα κριτήρια (ταίριασμα ≥50%)</p>
+        </div>`;
+    }
+
+    // HR Recommendations
+    if (jm.recommendations && jm.recommendations.length > 0) {
+        html += `<div class="jm-recommendations">
+            <div class="jm-recommendations-header">
+                <span class="jm-rec-icon">💡</span>
+                <h3>Προτάσεις HR</h3>
+            </div>
+            <ul class="jm-recommendations-list">
+                ${jm.recommendations.map(r => `<li>${escapeHtml(r)}</li>`).join('')}
+            </ul>
+        </div>`;
+    }
+
+    html += '</div>';
+    return html;
+}
+
+// Tab switching for job matching
+function switchJMTab(btn, tabName) {
+    const container = btn.closest('.jm-tabs-container');
+
+    // Update buttons
+    container.querySelectorAll('.jm-tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    // Update panels
+    container.querySelectorAll('.jm-tab-panel').forEach(p => p.classList.remove('active'));
+    container.querySelector(`.jm-tab-panel[data-tab="${tabName}"]`).classList.add('active');
+}
+
+// Format a single candidate card for job matching (new design)
+function formatJobMatchCandidateCard(c, displayRank) {
+    const matchClass = c.match_percentage >= 75 ? 'excellent' : c.match_percentage >= 60 ? 'good' : 'fair';
+
+    let html = `<div class="jm-candidate-card ${matchClass}">
+        <div class="jm-card-header">
+            <div class="jm-card-rank">${displayRank}</div>
+            <div class="jm-card-main">
+                <h3 class="jm-card-name">${escapeHtml(c.name)}</h3>
+                <div class="jm-card-meta">
+                    ${c.email ? `<span class="jm-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>${escapeHtml(c.email)}</span>` : ''}
+                    ${c.phone ? `<span class="jm-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>${escapeHtml(c.phone)}</span>` : ''}
+                    ${c.city ? `<span class="jm-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>${escapeHtml(c.city)}</span>` : ''}
+                </div>
+            </div>
+            <div class="jm-card-score">
+                <div class="jm-score-circle ${matchClass}">
+                    <span class="jm-score-value">${Math.round(c.match_percentage)}</span>
+                    <span class="jm-score-percent">%</span>
+                </div>
+                <span class="jm-score-label">${escapeHtml(c.match_level)}</span>
+            </div>
+        </div>`;
+
+    // Experience badge
+    if (c.total_experience_years) {
+        html += `<div class="jm-card-experience">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+            <span>${c.total_experience_years.toFixed(1)} χρόνια εμπειρίας</span>
+        </div>`;
+    }
+
+    // Criteria sections in a grid
+    html += '<div class="jm-criteria-grid">';
+
+    // Matched criteria
+    if (c.matched && c.matched.length > 0) {
+        html += `<div class="jm-criteria-section matched">
+            <div class="jm-criteria-header">
+                <span class="jm-criteria-icon">✓</span>
+                <span class="jm-criteria-title">Καλύπτει</span>
+                <span class="jm-criteria-count">${c.matched.length}</span>
+            </div>
+            <ul class="jm-criteria-list">
+                ${c.matched.slice(0, 5).map(m => `<li>
+                    <strong>${escapeHtml(m.requirement)}</strong>
+                    <span>${escapeHtml(m.value)}</span>
+                    <em>${escapeHtml(m.source)}</em>
+                </li>`).join('')}
+                ${c.matched.length > 5 ? `<li class="jm-more">+${c.matched.length - 5} ακόμη</li>` : ''}
+            </ul>
+        </div>`;
+    }
+
+    // Missing criteria
+    if (c.missing && c.missing.length > 0) {
+        html += `<div class="jm-criteria-section missing">
+            <div class="jm-criteria-header">
+                <span class="jm-criteria-icon">✗</span>
+                <span class="jm-criteria-title">Δεν καλύπτει</span>
+                <span class="jm-criteria-count">${c.missing.length}</span>
+            </div>
+            <ul class="jm-criteria-list">
+                ${c.missing.slice(0, 5).map(m => `<li>
+                    <strong>${escapeHtml(m.requirement)}</strong>
+                    <span>${escapeHtml(m.alternative)}</span>
+                    <span class="jm-severity-badge ${m.severity}">${m.severity === 'major' ? 'Σημαντικό' : 'Μικρό'}</span>
+                </li>`).join('')}
+                ${c.missing.length > 5 ? `<li class="jm-more">+${c.missing.length - 5} ακόμη</li>` : ''}
+            </ul>
+        </div>`;
+    }
+
+    html += '</div>';
+
+    // Comment
+    if (c.comment) {
+        html += `<div class="jm-card-comment">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <p>${escapeHtml(c.comment)}</p>
+        </div>`;
+    }
+
+    html += '</div>';
+    return html;
+}
+
+// Legacy format function (keeping for backwards compatibility)
+function formatJobMatchCandidate(c) {
+    return formatJobMatchCandidateCard(c, c.rank);
 }
 
 function formatHRAnalysis(hr) {
@@ -1236,13 +1457,60 @@ function populateRoleFilter() {
         }
     });
 
-    // Clear and repopulate
-    roleFilter.innerHTML = '<option value="">All Roles</option>';
-    Array.from(roles).sort().forEach(role => {
-        const option = document.createElement('option');
-        option.value = role;
-        option.textContent = role;
-        roleFilter.appendChild(option);
+    // Define role categories (order matters for display)
+    const roleCategories = {
+        'Λογιστική / Οικονομικά': ['λογιστ', 'οικονομ', 'accountant', 'financial', 'finance', 'bookkeeper'],
+        'Μηχανική / Τεχνικά': ['μηχανικ', 'τεχνικ', 'engineer', 'technical', 'technician'],
+        'Πληροφορική / IT': ['πληροφορικ', 'developer', 'programmer', 'software', 'it ', 'προγραμματ'],
+        'Διοίκηση / Management': ['διοίκ', 'διευθυντ', 'manager', 'director', 'προϊστάμενος', 'υπεύθυνος'],
+        'Πωλήσεις / Marketing': ['πωλητ', 'πώληση', 'sales', 'marketing', 'εμπορικ'],
+        'Διοικητική Υποστήριξη': ['γραμματ', 'διοικητ', 'administrative', 'secretary', 'υπάλληλος'],
+        'Αποθήκη / Logistics': ['αποθηκ', 'logistics', 'warehouse', 'supply chain'],
+        'Παραγωγή / Βιομηχανία': ['παραγωγ', 'εργάτ', 'χειριστ', 'operator', 'production', 'manufacturing'],
+        'HR / Ανθρώπινο Δυναμικό': ['hr', 'human resources', 'ανθρώπιν', 'προσωπικ'],
+        'Άλλες Θέσεις': []  // Fallback category
+    };
+
+    // Categorize roles
+    const categorizedRoles = {};
+    Object.keys(roleCategories).forEach(cat => categorizedRoles[cat] = []);
+
+    Array.from(roles).forEach(role => {
+        const roleLower = role.toLowerCase();
+        let assigned = false;
+
+        for (const [category, keywords] of Object.entries(roleCategories)) {
+            if (category === 'Άλλες Θέσεις') continue; // Skip fallback
+
+            if (keywords.some(kw => roleLower.includes(kw))) {
+                categorizedRoles[category].push(role);
+                assigned = true;
+                break;
+            }
+        }
+
+        if (!assigned) {
+            categorizedRoles['Άλλες Θέσεις'].push(role);
+        }
+    });
+
+    // Clear and repopulate with optgroups
+    roleFilter.innerHTML = '<option value="">Όλοι οι Ρόλοι</option>';
+
+    Object.entries(categorizedRoles).forEach(([category, categoryRoles]) => {
+        if (categoryRoles.length === 0) return; // Skip empty categories
+
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = `── ${category} ──`;
+
+        categoryRoles.sort().forEach(role => {
+            const option = document.createElement('option');
+            option.value = role;
+            option.textContent = role;
+            optgroup.appendChild(option);
+        });
+
+        roleFilter.appendChild(optgroup);
     });
 }
 
