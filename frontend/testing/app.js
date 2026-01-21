@@ -5,8 +5,6 @@
 
 // Configuration
 const API_BASE = 'https://iw9oxe3w4b.execute-api.eu-north-1.amazonaws.com/v1';
-// Use Lambda Function URL for queries (no 30s timeout limit like API Gateway)
-const QUERY_URL = 'https://xhv2enmi3bxczfmoai5aoiho7i0hgxhz.lambda-url.eu-north-1.on.aws/';
 const MAX_FILES = 10;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const POLL_INTERVAL = 2000;
@@ -840,10 +838,10 @@ async function sendChatMessage() {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000);
 
-        const response = await fetch(QUERY_URL, {
+        const response = await fetch(`${API_BASE}/test/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: message, execute: true, limit: 50 }),
+            body: JSON.stringify({ query: message, execute: true, limit: 50, include_hr_analysis: false }),
             signal: controller.signal
         });
 

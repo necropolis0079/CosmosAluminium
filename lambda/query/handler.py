@@ -97,7 +97,7 @@ def handler(event: dict, context: Any) -> dict:
         execute = body.get("execute", False)
         limit = min(body.get("limit", 50), 500)  # Cap at 500
         query_context = body.get("context", {})
-        include_hr_analysis = body.get("include_hr_analysis", True)  # Default: enabled
+        include_hr_analysis = body.get("include_hr_analysis", False)  # Default: disabled (for fast 30s responses)
 
         if not user_query:
             return _error_response(400, "Missing 'query' parameter", request_id)
