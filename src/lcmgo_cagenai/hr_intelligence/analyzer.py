@@ -132,8 +132,12 @@ class HRIntelligenceAnalyzer:
             report = self._parse_response(response, language)
         except Exception as e:
             logger.error(f"Failed to parse LLM response: {e}")
-            logger.debug(f"Raw response: {response.content[:1000]}")
-            raise RuntimeError(f"Failed to parse HR analysis response: {e}") from e
+            logger.warning(f"Raw response (first 2000 chars): {response.content[:2000]}")
+            # Return fallback report instead of failing
+            logger.info("Using fallback report due to parse failure")
+            report = self._create_fallback_report(
+                input_data, candidates_to_analyze, language, start_time, str(e)
+            )
 
         # Add metadata
         report.analysis_language = language
@@ -248,6 +252,7 @@ class HRIntelligenceAnalyzer:
         - Pure JSON
         - JSON wrapped in markdown code blocks
         - JSON with surrounding text
+        - JSON with common formatting issues
         """
         # Try direct parse first
         try:
@@ -261,16 +266,58 @@ class HRIntelligenceAnalyzer:
             try:
                 return json.loads(json_match.group(1))
             except json.JSONDecodeError:
-                pass
+                # Try to repair and parse
+                repaired = self._repair_json(json_match.group(1))
+                if repaired:
+                    return repaired
 
         # Try to find JSON object by braces
         brace_start = content.find("{")
         brace_end = content.rfind("}")
         if brace_start != -1 and brace_end != -1:
+            json_str = content[brace_start : brace_end + 1]
             try:
-                return json.loads(content[brace_start : brace_end + 1])
+                return json.loads(json_str)
             except json.JSONDecodeError:
-                pass
+                # Try to repair and parse
+                repaired = self._repair_json(json_str)
+                if repaired:
+                    return repaired
+
+        return None
+
+    def _repair_json(self, json_str: str) -> dict[str, Any] | None:
+        """
+        Attempt to repair common JSON formatting issues.
+        """
+        try:
+            # Remove trailing commas before ] or }
+            repaired = re.sub(r',\s*([}\]])', r'\1', json_str)
+            # Remove control characters except newlines and tabs
+            repaired = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', repaired)
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            # More aggressive: try to extract just the outer object
+            # Find balanced braces
+            depth = 0
+            start = None
+            for i, c in enumerate(json_str):
+                if c == '{':
+                    if depth == 0:
+                        start = i
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        try:
+                            return json.loads(json_str[start:i+1])
+                        except json.JSONDecodeError:
+                            pass
+        except Exception:
+            pass
 
         return None
 
@@ -307,6 +354,68 @@ class HRIntelligenceAnalyzer:
             ranked_candidates=[],
             hr_recommendation=input_data.requirements and self._build_empty_recommendation(
                 recommendation, language
+            ),
+            analysis_language=language,
+            analysis_timestamp=datetime.now(timezone.utc),
+            llm_model=self.model.value,
+            latency_ms=int((time.time() - start_time) * 1000),
+        )
+
+    def _create_fallback_report(
+        self,
+        input_data: HRAnalysisInput,
+        candidates: list[CandidateProfile],
+        language: str,
+        start_time: float,
+        error_msg: str,
+    ) -> HRAnalysisReport:
+        """Create a fallback report when LLM response parsing fails."""
+        from .schema import HRRecommendation, RankedCandidate, CandidateEvaluation
+
+        if language == "el":
+            summary = f"Βρέθηκαν {len(candidates)} υποψήφιοι (απλοποιημένη ανάλυση)"
+            note = "Σημείωση: Η λεπτομερής ανάλυση δεν ήταν διαθέσιμη"
+        else:
+            summary = f"Found {len(candidates)} candidates (simplified analysis)"
+            note = "Note: Detailed analysis was not available"
+
+        # Create basic ranked candidates from the input
+        ranked = []
+        for i, candidate in enumerate(candidates[:5]):  # Top 5
+            ranked.append(RankedCandidate(
+                rank=i + 1,
+                candidate_id=candidate.candidate_id,
+                name=candidate.name,
+                suitability="Μέτρια" if language == "el" else "Medium",
+                evaluation=CandidateEvaluation(
+                    strengths=[],
+                    gaps=[],
+                    overall_comment=note,
+                ),
+                match_score=50,  # Default score
+            ))
+
+        return HRAnalysisReport(
+            request_analysis=RequestAnalysis(
+                summary=summary,
+                mandatory_criteria=[],
+                preferred_criteria=[],
+                inferred_criteria=[],
+            ),
+            query_outcome=QueryOutcome(
+                direct_matches=input_data.direct_result_count,
+                total_matches=len(candidates),
+                relaxation_applied=len(input_data.relaxations_applied) > 0,
+                zero_results_reason=None,
+            ),
+            criteria_expansion=None,
+            ranked_candidates=ranked,
+            hr_recommendation=HRRecommendation(
+                top_candidates=[c.name for c in candidates[:3]],
+                recommendation_summary=summary,
+                interview_priorities=[],
+                hiring_suggestions=[note],
+                alternative_search=None,
             ),
             analysis_language=language,
             analysis_timestamp=datetime.now(timezone.utc),
