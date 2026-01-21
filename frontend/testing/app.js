@@ -781,19 +781,44 @@ async function sendChatMessage() {
     appendChatMessage('user', message);
     chatInput.value = '';
 
+    // Show loading indicator
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'message assistant loading';
+    loadingDiv.innerHTML = '<div class="message-content">⏳ Αναλύω το ερώτημά σας... (μπορεί να χρειαστούν 30-60 δευτερόλεπτα)</div>';
+    chatMessages.appendChild(loadingDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
     try {
+        // Use AbortController with 180 second timeout for HR Intelligence analysis
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000);
+
         const response = await fetch(`${API_BASE}/test/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: message, execute: true, limit: 50 })
+            body: JSON.stringify({ query: message, execute: true, limit: 50 }),
+            signal: controller.signal
         });
 
-        if (!response.ok) throw new Error('Query failed');
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Query failed:', response.status, errorText);
+            throw new Error(`Query failed: ${response.status}`);
+        }
 
         const data = await response.json();
+        loadingDiv.remove();
         appendChatMessage('assistant', formatQueryResponse(data));
     } catch (error) {
-        appendChatMessage('error', 'Failed to process query. Please try again.');
+        loadingDiv.remove();
+        console.error('Query error:', error);
+        if (error.name === 'AbortError') {
+            appendChatMessage('error', 'Το ερώτημα έληξε (timeout). Δοκιμάστε ξανά με απλούστερο ερώτημα.');
+        } else {
+            appendChatMessage('error', `Αποτυχία επεξεργασίας: ${error.message}. Δοκιμάστε ξανά.`);
+        }
     }
 }
 
