@@ -781,13 +781,34 @@ async function sendChatMessage() {
     appendChatMessage('user', message);
     chatInput.value = '';
 
+    // Check if HR analysis is enabled
+    const hrAnalysisEnabled = document.getElementById('hrAnalysisToggle')?.checked || false;
+
     // Show loading indicator
     const loadingDiv = document.createElement('div');
     loadingDiv.className = 'message assistant loading';
-    loadingDiv.innerHTML = `
+    loadingDiv.innerHTML = hrAnalysisEnabled ? `
         <div class="message-content">
             <div class="loading-steps">
-                <div class="loading-step active" id="step-process">
+                <div class="loading-step active" id="step-translate">
+                    <span class="step-icon">🔄</span>
+                    <span class="step-text">Μετάφραση ερωτήματος...</span>
+                </div>
+                <div class="loading-step" id="step-search">
+                    <span class="step-icon">🔍</span>
+                    <span class="step-text">Αναζήτηση στη βάση δεδομένων...</span>
+                </div>
+                <div class="loading-step" id="step-analyze">
+                    <span class="step-icon">🤖</span>
+                    <span class="step-text">HR Intelligence ανάλυση υποψηφίων...</span>
+                </div>
+            </div>
+            <div class="loading-timer">Χρόνος: <span id="loading-time">0</span> δευτερόλεπτα</div>
+        </div>
+    ` : `
+        <div class="message-content">
+            <div class="loading-steps">
+                <div class="loading-step active">
                     <span class="step-icon">🔍</span>
                     <span class="step-text">Επεξεργασία ερωτήματος...</span>
                 </div>
@@ -797,17 +818,46 @@ async function sendChatMessage() {
     chatMessages.appendChild(loadingDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
-    const stepInterval = null; // No animation needed for fast queries
+    // Animate steps for HR analysis
+    let stepInterval = null;
+    if (hrAnalysisEnabled) {
+        const steps = ['step-translate', 'step-search', 'step-analyze'];
+        let currentStep = 0;
+        const stepTimings = [2000, 5000, 60000];
+        let startTime = Date.now();
+
+        stepInterval = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const timerEl = document.getElementById('loading-time');
+            if (timerEl) timerEl.textContent = Math.floor(elapsed / 1000);
+
+            if (currentStep < steps.length - 1) {
+                let totalTime = 0;
+                for (let i = 0; i <= currentStep; i++) totalTime += stepTimings[i];
+                if (elapsed > totalTime) {
+                    const currentEl = document.getElementById(steps[currentStep]);
+                    const nextEl = document.getElementById(steps[currentStep + 1]);
+                    if (currentEl) {
+                        currentEl.classList.remove('active');
+                        currentEl.classList.add('completed');
+                    }
+                    currentStep++;
+                    if (nextEl) nextEl.classList.add('active');
+                }
+            }
+        }, 500);
+    }
 
     try {
         // Use AbortController with 180 second timeout for HR Intelligence analysis
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000);
 
+        const includeHrAnalysis = document.getElementById('hrAnalysisToggle')?.checked || false;
         const response = await fetch(`${API_BASE}/test/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: message, execute: true, limit: 50, include_hr_analysis: false }),
+            body: JSON.stringify({ query: message, execute: true, limit: 50, include_hr_analysis: includeHrAnalysis }),
             signal: controller.signal
         });
 

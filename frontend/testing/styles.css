@@ -1432,6 +1432,32 @@ body {
     color: var(--accent);
 }
 
+.chat-options {
+    padding: 8px 20px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.checkbox-label span {
+    user-select: none;
+}
+
 .chat-input-area {
     display: flex;
     gap: 12px;
