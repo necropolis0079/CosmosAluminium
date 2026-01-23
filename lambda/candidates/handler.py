@@ -476,12 +476,13 @@ def get_cv_url(conn, candidate_id: str) -> dict | None:
         logger.error(f"DynamoDB query failed: {e}")
         return None
 
-    # Decode URL-encoded s3_key if needed
-    if "%" in s3_key:
-        s3_key = unquote(s3_key)
+    # DO NOT decode s3_key - S3 stores files with URL-encoded keys for Greek filenames
+    # The s3_key from DynamoDB should be used as-is
 
     # Extract filename from s3_key
-    filename = s3_key.split("/")[-1] if "/" in s3_key else s3_key
+    # raw_filename is URL-encoded (matches S3 key), filename is decoded (for display)
+    raw_filename = s3_key.split("/")[-1] if "/" in s3_key else s3_key
+    filename = unquote(raw_filename)  # Decode for display in Content-Disposition header
 
     # Build Content-Disposition header with proper encoding for non-ASCII filenames
     # RFC 5987: Use filename* with UTF-8 encoding for non-ASCII characters
