@@ -644,6 +644,18 @@ class DatabaseWriter:
     def _insert_education(self, cursor: Any, candidate_id: UUID, education: list) -> None:
         """Insert education records."""
         for edu in education:
+            # Validate and fix date range if needed
+            start_date = edu.start_date
+            end_date = edu.end_date
+
+            # Fix invalid date ranges: if end_date < start_date, swap them
+            if start_date and end_date and end_date < start_date:
+                logger.warning(
+                    f"Education date range invalid: {start_date} > {end_date} "
+                    f"for '{edu.degree_title}' at '{edu.institution_name}'. Swapping dates."
+                )
+                start_date, end_date = end_date, start_date
+
             cursor.execute(
                 """
                 INSERT INTO candidate_education (
@@ -671,8 +683,8 @@ class DatabaseWriter:
                     edu.field_of_study.value if edu.field_of_study else None,
                     edu.field_of_study_detail,
                     edu.specialization,
-                    edu.start_date,
-                    edu.end_date,
+                    start_date,
+                    end_date,
                     edu.is_current,
                     edu.graduation_year,
                     edu.grade_value,
@@ -687,6 +699,18 @@ class DatabaseWriter:
     def _insert_experience(self, cursor: Any, candidate_id: UUID, experience: list) -> None:
         """Insert experience records."""
         for exp in experience:
+            # Validate and fix date range if needed
+            start_date = exp.start_date
+            end_date = exp.end_date
+
+            # Fix invalid date ranges: if end_date < start_date, swap them
+            if start_date and end_date and end_date < start_date:
+                logger.warning(
+                    f"Experience date range invalid: {start_date} > {end_date} "
+                    f"for '{exp.job_title}' at '{exp.company_name}'. Swapping dates."
+                )
+                start_date, end_date = end_date, start_date
+
             cursor.execute(
                 """
                 INSERT INTO candidate_experience (
@@ -715,8 +739,8 @@ class DatabaseWriter:
                     str(exp.role_id) if exp.role_id else None,
                     exp.department,
                     exp.employment_type.value if exp.employment_type else None,
-                    exp.start_date,
-                    exp.end_date,
+                    start_date,
+                    end_date,
                     exp.is_current,
                     exp.description,
                     exp.responsibilities or [],
