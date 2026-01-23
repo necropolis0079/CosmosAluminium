@@ -1,10 +1,63 @@
 # Project Progress - LCMGoCloud-CAGenAI
 
-Last Updated: 2026-01-21 (Session 40)
+Last Updated: 2026-01-23 (Session 45)
 
 ---
 
 ## DONE
+
+### 2026-01-23 (Session 45) - View Original CV Feature + CloudFront
+
+**Features Implemented**:
+
+1. **View Original CV Button**
+   - Added download icon button to candidate list cards in Testing UI
+   - Clicking opens original CV file (PDF/DOCX) in new browser tab
+   - Uses S3 presigned URLs with 1-hour expiry
+
+2. **CloudFront CDN Distribution**
+   - Created CloudFront distribution for cv-uploads S3 bucket
+   - Origin Access Control (OAC) for secure S3 access
+   - Custom cache policy for presigned URL query string forwarding
+   - Geo-restriction to EU countries (GDPR compliance)
+   - **Note**: Currently disabled due to OAC/presigned URL auth conflict
+
+3. **Greek Filename Handling**
+   - RFC 5987 encoding for non-ASCII filenames in Content-Disposition header
+   - ASCII fallback (`cv_document.pdf`) with UTF-8 encoded original filename
+   - S3 keys kept URL-encoded to match actual S3 storage
+
+**Files Created**:
+- `infra/terraform/cloudfront.tf` - CloudFront distribution, OAC, cache policy
+
+**Files Modified**:
+- `lambda/candidates/handler.py` - Added `/cv` endpoint, presigned URL generation
+- `frontend/testing/app.js` - Added viewOriginalCV() function, download button
+- `frontend/testing/styles.css` - Added btn-download styling, spinner
+- `infra/terraform/api_gateway_testing.tf` - New route, Lambda env vars
+
+**API Endpoint**:
+- `GET /test/candidates/{candidate_id}/cv` - Returns presigned URL for CV file
+
+**CloudFront Resources**:
+| Resource | Value |
+|----------|-------|
+| Distribution ID | `E35P12LIQ9HC6F` |
+| Domain | `dxunhhtj3zicn.cloudfront.net` |
+| Status | Created but disabled for CVs |
+
+**GitLab Commits**:
+| Commit | Description |
+|--------|-------------|
+| `982deb8` | feat: Add View Original CV button with CloudFront CDN |
+| `6dcd66d` | feat: Upgrade Query Translator from Haiku to Sonnet |
+| `c71d314` | fix: Handle non-ASCII filenames in Content-Disposition header |
+| `2412892` | fix: Disable CloudFront for CV URLs - OAC conflicts with presigned auth |
+| `fe5c1b9` | fix: Keep s3_key URL-encoded for S3 requests |
+
+**Status**: COMPLETED ✅
+
+---
 
 ### 2026-01-21 (Session 40) - Comprehensive Taxonomy Migration
 
