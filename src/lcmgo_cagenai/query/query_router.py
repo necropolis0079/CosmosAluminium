@@ -95,8 +95,12 @@ class QueryRouter:
         Returns:
             RouteResult with appropriate response
         """
-        # Check for explicit clarification request
-        if translation.clarification_needed or translation.confidence < self.MODERATE_CONFIDENCE:
+        # Route to clarification ONLY based on confidence threshold
+        # Note: We ignore LLM's clarification_needed flag because it's unreliable
+        # for complex queries (especially Greek job descriptions)
+        # Session 44: Changed from "clarification_needed OR confidence < 0.5"
+        # to just "confidence < 0.5" for deterministic behavior
+        if translation.confidence < self.MODERATE_CONFIDENCE:
             return self._route_clarification(translation)
 
         # Route by query type

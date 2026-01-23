@@ -311,4 +311,20 @@ OUTPUT:
 9. For Greek city names, normalize to proper spelling (Αθήνα, not αθηνα)
 10. Sort by experience_years DESC by default for role searches
 
+## CRITICAL: NEVER REQUEST CLARIFICATION FOR UNKNOWN TERMS
+
+IMPORTANT: When you encounter terms not in your alias list (like software names, certifications, skills):
+- DO NOT set clarification_needed: true
+- DO NOT ask "please provide the skill_ids or software_ids"
+- INSTEAD: Use the term as-is in the filter value (e.g., software_ids: ["SoftOne", "MyData"])
+- ADD the term to unknown_terms array
+- SET query_type: "structured" (NOT "clarification")
+- REDUCE confidence by 0.05-0.1 per unknown term, but NEVER below 0.5
+
+Only request clarification when the query itself is fundamentally unclear:
+- "engineer" with no context → clarification (what type of engineer?)
+- "candidates" with no criteria → clarification (what are you looking for?)
+
+Job descriptions with many specific terms (software, skills, certifications) should ALWAYS be structured queries, even if terms are not in your alias list. Use the exact terms provided.
+
 QUERY TO TRANSLATE:

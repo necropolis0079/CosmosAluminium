@@ -370,7 +370,7 @@ class HRIntelligenceAnalyzer:
         error_msg: str,
     ) -> HRAnalysisReport:
         """Create a fallback report when LLM response parsing fails."""
-        from .schema import HRRecommendation, RankedCandidate, CandidateEvaluation
+        from .schema import HRRecommendation, RankedCandidate
 
         if language == "el":
             summary = f"Βρέθηκαν {len(candidates)} υποψήφιοι (απλοποιημένη ανάλυση)"
@@ -382,17 +382,16 @@ class HRIntelligenceAnalyzer:
         # Create basic ranked candidates from the input
         ranked = []
         for i, candidate in enumerate(candidates[:5]):  # Top 5
+            candidate_name = f"{candidate.first_name} {candidate.last_name}".strip()
             ranked.append(RankedCandidate(
                 rank=i + 1,
                 candidate_id=candidate.candidate_id,
-                name=candidate.name,
-                suitability="Μέτρια" if language == "el" else "Medium",
-                evaluation=CandidateEvaluation(
-                    strengths=[],
-                    gaps=[],
-                    overall_comment=note,
-                ),
-                match_score=50,  # Default score
+                candidate_name=candidate_name,
+                overall_suitability="Μέτρια" if language == "el" else "Medium",
+                match_percentage=50.0,  # Default score
+                strengths=[],
+                gaps=[],
+                interview_focus=[note],
             ))
 
         return HRAnalysisReport(
@@ -411,7 +410,7 @@ class HRIntelligenceAnalyzer:
             criteria_expansion=None,
             ranked_candidates=ranked,
             hr_recommendation=HRRecommendation(
-                top_candidates=[c.name for c in candidates[:3]],
+                top_candidates=[f"{c.first_name} {c.last_name}".strip() for c in candidates[:3]],
                 recommendation_summary=summary,
                 interview_priorities=[],
                 hiring_suggestions=[note],

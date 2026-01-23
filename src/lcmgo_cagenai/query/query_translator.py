@@ -1,8 +1,12 @@
 """
-Query Translator using Claude Haiku for NL → structured filters.
+Query Translator using Claude Sonnet for NL → structured filters.
 
 Translates natural language HR queries (Greek/English) into structured
 filters that can be converted to SQL.
+
+Note: Upgraded from Haiku to Sonnet in Session 44 (2026-01-23) to better
+handle complex Greek terminology and job descriptions without requesting
+clarification. See docs/JOB-DESCRIPTION-QUERY-ROUTING.md for details.
 """
 
 import asyncio
@@ -34,17 +38,25 @@ DEFAULT_PROMPT_VERSION = "v1.0.0"
 
 class QueryTranslator:
     """
-    Query translator using Claude Haiku for fast NL parsing.
+    Query translator using Claude Sonnet for accurate NL parsing.
 
     Converts natural language queries like "λογιστής με SAP, 5+ χρόνια, Αθήνα"
     into structured filters that can be converted to SQL.
+
+    Handles complex inputs including:
+    - Simple queries: "λογιστής με SAP"
+    - Job descriptions with Greek terminology (Β' & Γ' κατηγορίας, ΑΕΙ/ΤΕΙ, etc.)
+    - Unknown terms without requesting clarification
 
     Example:
         translator = QueryTranslator()
         result = await translator.translate("λογιστής με Softone, 5+ χρόνια")
     """
 
-    MODEL = ModelType.CLAUDE_HAIKU
+    # Upgraded from CLAUDE_HAIKU to CLAUDE_SONNET (Session 44, 2026-01-23)
+    # Reason: Better handling of complex Greek terminology and job descriptions
+    # Cost impact: +$21/month, justified by improved accuracy
+    MODEL = ModelType.CLAUDE_SONNET
     MAX_RETRIES = 2
     MAX_TOKENS = 1024
     RETRY_DELAYS = [0.5, 1.0, 2.0]
