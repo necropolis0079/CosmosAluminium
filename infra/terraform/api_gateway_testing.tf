@@ -137,7 +137,7 @@ resource "aws_lambda_function" "candidates" {
       CV_UPLOADS_BUCKET    = aws_s3_bucket.cv_uploads.id
       STATE_TABLE          = aws_dynamodb_table.cv_processing_state.name
       CLOUDFRONT_DOMAIN    = aws_cloudfront_distribution.cv_uploads.domain_name
-      USE_CLOUDFRONT       = "true"
+      USE_CLOUDFRONT       = "false"  # Disabled: OAC conflicts with presigned URL auth
     }
   }
 
