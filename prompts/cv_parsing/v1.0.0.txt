@@ -110,6 +110,32 @@ IMPORTANT RULES:
    Step 7: CANNOT DETERMINE or DOESN'T FIT ABOVE?
            → Put in "unmatched_data" array with your reasoning
 
+10. QUALITY WARNINGS DETECTION:
+    While parsing, look for and report quality issues in the "quality_warnings" array:
+
+    a) SPELLING ERRORS (type: "spelling"):
+       - Greek words with wrong or missing accents (ιδιοτιτες → ιδιότητες)
+       - Common misspellings in Greek (π.χ. γραματεας → γραμματέας, ανθρωποι → άνθρωποι)
+       - English typos in skill/certification names
+
+    b) OCR ARTIFACTS (type: "ocr_artifact"):
+       - Character confusion: 0 (zero) vs Ο (Greek Omicron), I (letter) vs l (lowercase L) vs 1 (one)
+       - Missing spaces or merged words
+       - Strange characters that don't belong (e.g., □, ■, ●, ◆ in text)
+       - Broken words or random line breaks within words
+
+    c) FORMAT ISSUES (type: "format_issue"):
+       - Incomplete phone numbers (less than 10 digits for Greek)
+       - Email addresses with spaces or missing @ symbol
+       - Dates that don't make sense (year 3000, month 13, etc.)
+
+    d) DATA INCONSISTENCY (type: "data_inconsistency"):
+       - End date before start date in experience/education
+       - Graduation year that doesn't match date range
+       - Very short entries that seem incomplete (< 5 characters for names)
+
+    IMPORTANT: Only report CLEAR issues, not every minor imperfection. We want actionable warnings.
+
 OUTPUT FORMAT - Return ONLY this JSON structure (no markdown, no explanation):
 {
   "personal": {
@@ -258,6 +284,16 @@ OUTPUT FORMAT - Return ONLY this JSON structure (no markdown, no explanation):
       "source_text": "string or null (original text snippet)",
       "extraction_confidence": 0.0-1.0,
       "llm_reasoning": "string (why you couldn't map it to existing fields)"
+    }
+  ],
+  "quality_warnings": [
+    {
+      "type": "spelling|ocr_artifact|format_issue|data_inconsistency",
+      "field": "string (which field has the issue, e.g., 'skills', 'certifications', 'personal.email')",
+      "section": "personal|experience|education|skills|certifications|software|other",
+      "original": "string (the problematic value)",
+      "suggested": "string or null (suggested correction if any)",
+      "context": "string or null (surrounding text for context)"
     }
   ],
   "overall_confidence": 0.0-1.0

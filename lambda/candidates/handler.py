@@ -106,7 +106,9 @@ def list_candidates(conn, limit: int = 500, offset: int = 0) -> list:
             c.updated_at,
             c.quality_score,
             cd.file_name,
-            cd.s3_key
+            cd.s3_key,
+            COALESCE(c.warnings_count, 0) AS warnings_count,
+            COALESCE(c.errors_count, 0) AS errors_count
         FROM candidates c
         LEFT JOIN candidate_documents cd ON c.id = cd.candidate_id AND cd.is_primary = true
         ORDER BY c.created_at DESC
@@ -119,7 +121,7 @@ def list_candidates(conn, limit: int = 500, offset: int = 0) -> list:
         "date_of_birth", "nationality", "address_street", "address_city",
         "address_postal_code", "address_country", "military_status",
         "created_at", "updated_at", "quality_score",
-        "original_filename", "s3_key"
+        "original_filename", "s3_key", "warnings_count", "errors_count"
     ]
 
     candidates = []
@@ -322,6 +324,55 @@ def get_candidate_licenses(conn, candidate_id: str) -> list:
     ]
 
 
+def get_candidate_quality_warnings(conn, candidate_id: str) -> list:
+    """Get candidate quality warnings (Session 46)."""
+    query = """
+        SELECT
+            category::text,
+            severity::text,
+            field_name,
+            section,
+            message,
+            message_greek,
+            original_value,
+            suggested_value,
+            was_auto_fixed,
+            llm_detected,
+            created_at
+        FROM cv_quality_warnings
+        WHERE candidate_id = :candidate_id
+        ORDER BY
+            CASE severity
+                WHEN 'error' THEN 1
+                WHEN 'warning' THEN 2
+                ELSE 3
+            END,
+            created_at DESC
+    """
+    try:
+        rows = conn.run(query, candidate_id=candidate_id)
+        return [
+            {
+                "category": r[0],
+                "severity": r[1],
+                "field_name": r[2],
+                "section": r[3],
+                "message": r[4],
+                "message_greek": r[5],
+                "original_value": r[6],
+                "suggested_value": r[7],
+                "was_auto_fixed": r[8],
+                "llm_detected": r[9],
+                "created_at": r[10].isoformat() if r[10] else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        # Table may not exist yet
+        logger.warning(f"Could not fetch quality warnings: {e}")
+        return []
+
+
 def get_candidate_by_id(conn, candidate_id: str) -> dict | None:
     """Get a single candidate by ID with full data."""
     # Query for specific candidate
@@ -343,7 +394,9 @@ def get_candidate_by_id(conn, candidate_id: str) -> dict | None:
             c.updated_at,
             c.quality_score,
             cd.file_name,
-            cd.s3_key
+            cd.s3_key,
+            COALESCE(c.warnings_count, 0) AS warnings_count,
+            COALESCE(c.errors_count, 0) AS errors_count
         FROM candidates c
         LEFT JOIN candidate_documents cd ON c.id = cd.candidate_id AND cd.is_primary = true
         WHERE c.id = :candidate_id
@@ -358,7 +411,7 @@ def get_candidate_by_id(conn, candidate_id: str) -> dict | None:
         "date_of_birth", "nationality", "address_street", "address_city",
         "address_postal_code", "address_country", "military_status",
         "created_at", "updated_at", "quality_score",
-        "original_filename", "s3_key"
+        "original_filename", "s3_key", "warnings_count", "errors_count"
     ]
 
     candidate = dict(zip(columns, rows[0]))
@@ -372,6 +425,7 @@ def get_candidate_by_id(conn, candidate_id: str) -> dict | None:
     candidate["training"] = get_candidate_training(conn, cid)
     candidate["software"] = get_candidate_software(conn, cid)
     candidate["driving_licenses"] = get_candidate_licenses(conn, cid)
+    candidate["quality_warnings"] = get_candidate_quality_warnings(conn, cid)
 
     return candidate
 

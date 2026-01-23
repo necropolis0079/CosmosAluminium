@@ -126,6 +126,7 @@ async def process_cv(
     try:
         from lcmgo_cagenai.parser import (
             CVParser,
+            CVQualityChecker,
             DatabaseWriter,
             SearchIndexer,
             TaxonomyMapper,
@@ -195,6 +196,37 @@ async def process_cv(
             logger.warning(f"Taxonomy mapping failed: {e}")
             # Continue without taxonomy mapping
 
+    # 5b. Quality Check (Session 46)
+    quality_checker = CVQualityChecker()
+
+    # Check completeness
+    quality_checker.check_completeness(parsed_cv)
+
+    # Add email/phone validation warnings (from Task 1.7)
+    if parsed_cv.personal.email_warnings:
+        quality_checker.add_email_warnings(
+            parsed_cv.personal.email_warnings,
+            parsed_cv.personal.email_suggestions,
+            parsed_cv.personal.email,
+        )
+    if parsed_cv.personal.phone_warnings:
+        quality_checker.add_phone_warnings(
+            parsed_cv.personal.phone_warnings,
+            parsed_cv.personal.phone_suggestions,
+            parsed_cv.personal.phone,
+        )
+
+    # Add LLM-detected warnings from parsed CV (if present in raw_json)
+    if parsed_cv.raw_json and "quality_warnings" in parsed_cv.raw_json:
+        quality_checker.add_llm_warnings(parsed_cv.raw_json.get("quality_warnings"))
+
+    # Get quality check result
+    quality_result = quality_checker.get_result()
+    logger.info(
+        f"Quality check complete: {quality_result.warning_count} warnings "
+        f"({quality_result.error_count} errors, {quality_result.auto_fixed_count} auto-fixed)"
+    )
+
     # 6. Update state: STORING
     update_state(correlation_id, ProcessingStatus.STORING)
 
@@ -213,6 +245,7 @@ async def process_cv(
                 correlation_id,
                 source_key=metadata.get("source_key"),
                 verify_write=True,  # Enable post-write verification
+                quality_result=quality_result,  # Session 46: Quality warnings
             )
             writer.close()
 
@@ -332,6 +365,12 @@ async def process_cv(
         if completeness_audit.data_quality_issues:
             completed_data["audit_quality_issues"] = completeness_audit.data_quality_issues
 
+    # Add quality check results to final state (Session 46)
+    if quality_result:
+        completed_data["quality_warnings_count"] = quality_result.warning_count
+        completed_data["quality_errors_count"] = quality_result.error_count
+        completed_data["quality_auto_fixed_count"] = quality_result.auto_fixed_count
+
     update_state(correlation_id, ProcessingStatus.COMPLETED, completed_data)
 
     # Build response with verification and audit summary
@@ -387,6 +426,10 @@ async def process_cv(
                 },
             },
         }
+
+    # Add quality check to response (Session 46)
+    if quality_result:
+        response["quality_check"] = quality_result.to_dict()
 
     return response
 

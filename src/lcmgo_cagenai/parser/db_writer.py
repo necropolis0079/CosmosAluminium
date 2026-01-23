@@ -19,6 +19,7 @@ from uuid import UUID
 import boto3
 import pg8000
 
+from .quality_checker import QualityCheckResult
 from .schema import CVCompletenessAudit, ParsedCV, ParsedTraining, ParsedUnmatchedData
 from .taxonomy_mapper import normalize_text
 
@@ -244,6 +245,7 @@ class DatabaseWriter:
         source_key: str | None = None,
         check_duplicates: bool = True,
         verify_write: bool = True,
+        quality_result: QualityCheckResult | None = None,
     ) -> tuple[UUID, WriteVerification | None, CVCompletenessAudit | None]:
         """
         Write parsed CV data to database with post-write verification and completeness audit.
@@ -254,6 +256,7 @@ class DatabaseWriter:
             source_key: S3 key of source file
             check_duplicates: Whether to check for duplicate candidates
             verify_write: Whether to verify records after write (Task 1.2)
+            quality_result: QualityCheckResult with warnings to store (Session 46)
 
         Returns:
             Tuple of (candidate_id, WriteVerification result or None, CVCompletenessAudit or None)
@@ -389,6 +392,21 @@ class DatabaseWriter:
                     f"skills={skill_stats['unmatched']}, certs={cert_stats['unmatched']}, software={software_stats['unmatched']}"
                 )
 
+            # Insert quality warnings (Session 46)
+            quality_warnings_count = 0
+            if quality_result and quality_result.warnings:
+                try:
+                    logger.info("DB Step 11: Inserting quality warnings")
+                    quality_warnings_count = self._insert_quality_warnings(
+                        cursor, candidate_id, correlation_id, quality_result
+                    )
+                    cursor.execute("SELECT 1")  # Force error surface
+                    cursor.fetchone()
+                    logger.info(f"DB Step 11 complete: {quality_warnings_count} warnings")
+                except Exception as e:
+                    logger.warning(f"DB Step 11 failed (quality warnings): {e}")
+                    # Non-fatal: quality warnings are informational
+
             # Insert GDPR consent record (basic processing consent)
             self._insert_consent(cursor, candidate_id)
 
@@ -412,6 +430,7 @@ class DatabaseWriter:
             logger.info(
                 f"Successfully wrote candidate {candidate_id}"
                 + (f", {unmatched_cv_count} unmatched CV data items" if unmatched_cv_count > 0 else "")
+                + (f", {quality_warnings_count} quality warnings" if quality_warnings_count > 0 else "")
             )
 
             # Post-write verification (Task 1.2)
@@ -1155,6 +1174,72 @@ class DatabaseWriter:
 
         if count > 0:
             logger.info(f"Inserted {count} training/seminar records for candidate {candidate_id}")
+
+        return count
+
+    def _insert_quality_warnings(
+        self,
+        cursor: Any,
+        candidate_id: UUID,
+        correlation_id: str,
+        quality_result: QualityCheckResult,
+    ) -> int:
+        """
+        Insert quality warnings from quality check result.
+
+        Args:
+            cursor: Database cursor
+            candidate_id: Candidate UUID
+            correlation_id: Processing correlation ID
+            quality_result: QualityCheckResult with warnings
+
+        Returns:
+            Number of warnings inserted
+        """
+        if not quality_result or not quality_result.warnings:
+            return 0
+
+        count = 0
+        for warning in quality_result.warnings:
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO cv_quality_warnings (
+                        candidate_id,
+                        correlation_id,
+                        category,
+                        severity,
+                        field_name,
+                        section,
+                        message,
+                        message_greek,
+                        original_value,
+                        suggested_value,
+                        was_auto_fixed,
+                        llm_detected
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        str(candidate_id),
+                        correlation_id,
+                        warning.category.value,
+                        warning.severity.value,
+                        warning.field_name,
+                        warning.section,
+                        warning.message,
+                        warning.message_greek,
+                        warning.original_value[:500] if warning.original_value else None,
+                        warning.suggested_value[:500] if warning.suggested_value else None,
+                        warning.was_auto_fixed,
+                        warning.llm_detected,
+                    ),
+                )
+                count += 1
+            except Exception as e:
+                logger.warning(f"Failed to insert quality warning: {e}")
+
+        if count > 0:
+            logger.info(f"Inserted {count} quality warnings for candidate {candidate_id}")
 
         return count
 

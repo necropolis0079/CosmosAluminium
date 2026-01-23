@@ -3839,3 +3839,153 @@ body {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.2); }
 }
+
+/* =============================================================================
+   QUALITY WARNINGS - Session 46
+   ============================================================================= */
+
+/* Warnings badge on candidate cards */
+.warnings-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: white;
+    background: var(--warning);
+    border-radius: 10px;
+    vertical-align: middle;
+}
+
+.warnings-badge.has-errors {
+    background: var(--error);
+}
+
+/* Quality warnings section in status card */
+.quality-warnings-section {
+    grid-column: 1 / -1;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-light);
+}
+
+.quality-warnings-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: all var(--transition-fast);
+}
+
+.quality-warnings-header:hover {
+    background: var(--border-color);
+}
+
+.quality-warnings-header .quality-icon {
+    font-size: 16px;
+}
+
+.quality-warnings-header .chevron {
+    margin-left: auto;
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    transition: transform var(--transition-fast);
+}
+
+.quality-warnings-list {
+    margin-top: 8px;
+    padding: 8px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+}
+
+.warning-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: var(--bg-card);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    line-height: 1.4;
+    border-left: 3px solid var(--border-color);
+}
+
+.warning-item:last-child {
+    margin-bottom: 0;
+}
+
+.warning-item.error {
+    border-left-color: var(--error);
+    background: var(--error-bg);
+}
+
+.warning-item.warning {
+    border-left-color: var(--warning);
+    background: var(--warning-bg);
+}
+
+.warning-item.info {
+    border-left-color: var(--info);
+    background: var(--info-bg);
+}
+
+.warning-icon {
+    flex-shrink: 0;
+    font-size: 14px;
+}
+
+.warning-message {
+    flex: 1;
+    color: var(--text-secondary);
+}
+
+.warning-item.error .warning-message {
+    color: var(--error);
+}
+
+.warning-item.warning .warning-message {
+    color: #b45309;
+}
+
+[data-theme="dark"] .warning-item.warning .warning-message {
+    color: #fbbf24;
+}
+
+.auto-fixed-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--success);
+    background: var(--success-bg);
+    border-radius: var(--radius-sm);
+    text-transform: uppercase;
+}
+
+.warning-more {
+    text-align: center;
+    padding: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Status card grid adjustment for quality warnings */
+.status-card.completed {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+}

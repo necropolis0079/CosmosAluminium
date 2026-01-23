@@ -1,10 +1,62 @@
 # Project Progress - LCMGoCloud-CAGenAI
 
-Last Updated: 2026-01-23 (Session 45)
+Last Updated: 2026-01-23 (Session 46)
 
 ---
 
 ## DONE
+
+### 2026-01-23 (Session 46) - CV Quality Check Feature
+
+**Features Implemented**:
+
+1. **Quality Warnings Detection**
+   - Checks for missing critical fields (name, contact info)
+   - Checks for missing optional fields (location, education, experience)
+   - Captures email/phone validation warnings from Task 1.7
+   - Date range error detection (end before start)
+   - LLM-detected issues (spelling errors, OCR artifacts)
+
+2. **Database Storage**
+   - New `cv_quality_warnings` table with severity levels (info, warning, error)
+   - Warning counts stored on `candidates` table (`warnings_count`, `errors_count`)
+   - Auto-updating trigger for counts
+   - View for candidate warnings summary
+
+3. **Frontend Display**
+   - Warnings badge on candidate cards (shows count)
+   - Quality Notes section in upload status after completion
+   - Expandable warnings list with Greek translations
+   - Auto-fixed badge for issues corrected during processing
+
+**Files Created**:
+- `scripts/sql/023_cv_quality_warnings.sql` - SQL migration
+- `src/lcmgo_cagenai/parser/quality_checker.py` - Quality checker module
+
+**Files Modified**:
+- `src/lcmgo_cagenai/parser/__init__.py` - Export quality checker classes
+- `src/lcmgo_cagenai/parser/db_writer.py` - Insert warnings method
+- `prompts/cv_parsing/v1.0.0.txt` - Quality warnings detection rules
+- `lambda/cv_parser/handler.py` - Integrate quality checker
+- `lambda/candidates/handler.py` - Return warning counts, quality warnings list
+- `frontend/testing/app.js` - Display warnings badge and list
+- `frontend/testing/styles.css` - Warning styles
+
+**Warning Categories**:
+| Category | Description |
+|----------|-------------|
+| `date_error` | Date range invalid (end < start) |
+| `contact_issue` | Email/phone validation warning |
+| `missing_critical` | Missing name, contact, etc. |
+| `missing_optional` | Missing location, DOB, etc. |
+| `spelling_suspect` | Potential spelling error (LLM) |
+| `ocr_artifact` | OCR error detected (LLM) |
+| `taxonomy_mismatch` | Term not in taxonomy |
+
+**SQL Scripts**: 23 (+1)
+**Python Source**: 26 (+1: quality_checker.py)
+
+---
 
 ### 2026-01-23 (Session 45) - View Original CV Feature + CloudFront
 

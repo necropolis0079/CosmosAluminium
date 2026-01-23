@@ -438,6 +438,14 @@ function renderStatusList() {
             card = document.createElement('div');
             card.className = `status-card ${job.status}`;
             card.dataset.jobId = id;
+
+            // Get quality warnings from completed job data
+            const qualityCheck = job.data?.quality_check || job.data?.quality_warnings_count;
+            const warningsCount = qualityCheck?.warning_count || job.data?.quality_warnings_count || 0;
+            const errorsCount = qualityCheck?.error_count || job.data?.quality_errors_count || 0;
+            const autoFixedCount = qualityCheck?.auto_fixed_count || 0;
+            const warnings = qualityCheck?.warnings || [];
+
             card.innerHTML = `
                 <div class="status-icon">
                     ${job.status === 'completed' ? `
@@ -463,6 +471,27 @@ function renderStatusList() {
                         <div class="status-progress-fill" style="width: ${job.progress}%"></div>
                     </div>
                 </div>
+                ${job.status === 'completed' && warningsCount > 0 ? `
+                    <div class="quality-warnings-section">
+                        <div class="quality-warnings-header" onclick="toggleQualityWarnings(this)">
+                            <span class="quality-icon">${errorsCount > 0 ? '❌' : '⚠️'}</span>
+                            <span>Quality Notes (${warningsCount})</span>
+                            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                        </div>
+                        <div class="quality-warnings-list" style="display: none;">
+                            ${warnings.slice(0, 5).map(w => `
+                                <div class="warning-item ${w.severity}">
+                                    <span class="warning-icon">${w.severity === 'error' ? '❌' : w.severity === 'warning' ? '⚠️' : 'ℹ️'}</span>
+                                    <span class="warning-message">${escapeHtml(w.message_greek || w.message)}</span>
+                                    ${w.was_auto_fixed ? '<span class="auto-fixed-badge">Auto-fixed</span>' : ''}
+                                </div>
+                            `).join('')}
+                            ${warnings.length > 5 ? `<div class="warning-more">+${warnings.length - 5} more</div>` : ''}
+                        </div>
+                    </div>
+                ` : ''}
             `;
             statusList.appendChild(card);
         }
@@ -474,6 +503,21 @@ function renderStatusList() {
             card.remove();
         }
     });
+}
+
+// Toggle quality warnings expand/collapse
+function toggleQualityWarnings(headerEl) {
+    const section = headerEl.closest('.quality-warnings-section');
+    const list = section.querySelector('.quality-warnings-list');
+    const chevron = section.querySelector('.chevron');
+
+    if (list.style.display === 'none') {
+        list.style.display = 'block';
+        chevron.style.transform = 'rotate(180deg)';
+    } else {
+        list.style.display = 'none';
+        chevron.style.transform = 'rotate(0deg)';
+    }
 }
 
 function updateStats() {
@@ -1763,12 +1807,21 @@ function renderCandidateListCard(candidate) {
     const fullName = `${candidate.first_name} ${candidate.last_name}`.trim() || 'Unknown';
     const initials = getInitials(candidate.first_name, candidate.last_name);
     const uploadDate = formatUploadDate(candidate.upload_date);
+    const warningsCount = (candidate.warnings_count || 0) + (candidate.errors_count || 0);
+    const hasErrors = (candidate.errors_count || 0) > 0;
 
     return `
         <div class="candidate-list-card" data-id="${candidate.id}">
             <div class="candidate-avatar">${initials}</div>
             <div class="candidate-list-info">
-                <div class="candidate-list-name">${escapeHtml(fullName)}</div>
+                <div class="candidate-list-name">
+                    ${escapeHtml(fullName)}
+                    ${warningsCount > 0 ? `
+                        <span class="warnings-badge ${hasErrors ? 'has-errors' : ''}" title="${warningsCount} quality ${warningsCount === 1 ? 'issue' : 'issues'}">
+                            ${warningsCount}
+                        </span>
+                    ` : ''}
+                </div>
                 <div class="candidate-list-details">
                     ${candidate.email ? `<span class="detail-item">${escapeHtml(candidate.email)}</span>` : ''}
                     ${candidate.city ? `<span class="detail-item">${escapeHtml(candidate.city)}</span>` : ''}

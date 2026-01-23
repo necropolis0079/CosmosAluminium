@@ -11,6 +11,13 @@ See docs/HR-INTELLIGENCE-UNIFIED.md for job parsing details.
 from .cv_parser import CVParser, parse_cv
 from .db_writer import DatabaseWriter, WriteVerification
 from .job_parser import JobParser, extract_requirements_from_query, parse_job_posting_sync
+from .quality_checker import (
+    CVQualityChecker,
+    QualityCheckResult,
+    QualityWarning,
+    WarningCategory,
+    WarningSeverity,
+)
 from .schema import (
     CVCompletenessAudit,
     ParsedCertification,
@@ -54,4 +61,10 @@ __all__ = [
     "validate_email",
     "validate_phone",
     "validate_contact_info",
+    # Quality Checker - Session 46
+    "CVQualityChecker",
+    "QualityCheckResult",
+    "QualityWarning",
+    "WarningCategory",
+    "WarningSeverity",
 ]
