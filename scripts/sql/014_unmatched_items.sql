@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS unmatched_taxonomy_items (
         (semantic_similarity >= 0 AND semantic_similarity <= 1)
     ),
     CONSTRAINT valid_match_method CHECK (
-        match_method IN ('exact', 'substring', 'semantic', 'fuzzy', 'none', 'suggested')
+        match_method IN ('exact', 'substring', 'semantic', 'fuzzy', 'fuzzy_suggested', 'none', 'suggested')
     )
 );
 

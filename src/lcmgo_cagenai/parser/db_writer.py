@@ -174,8 +174,19 @@ class DatabaseWriter:
         self._connection = db_connection
         self.region = region
 
-    def _get_connection(self) -> pg8000.Connection:
-        """Get database connection."""
+    def _get_connection(self, force_new: bool = False) -> pg8000.Connection:
+        """Get database connection.
+
+        Args:
+            force_new: If True, close existing connection and create a new one.
+        """
+        if force_new and self._connection is not None:
+            try:
+                self._connection.close()
+            except Exception:
+                pass
+            self._connection = None
+
         if self._connection is not None:
             return self._connection
 
@@ -197,6 +208,34 @@ class DatabaseWriter:
         )
 
         return self._connection
+
+    def _ensure_clean_connection(self) -> pg8000.Connection:
+        """Ensure connection is in a clean state, ready for new transaction.
+
+        Tries to rollback any existing transaction. If that fails,
+        creates a fresh connection.
+
+        Returns:
+            A connection in a clean transaction state.
+        """
+        conn = self._get_connection()
+
+        try:
+            # Try to rollback any existing transaction
+            conn.rollback()
+
+            # Verify connection is healthy with a simple query
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+
+            return conn
+
+        except Exception as e:
+            # Connection is broken or in bad state - get a fresh one
+            logger.warning(f"Connection in bad state, creating fresh connection: {e}")
+            return self._get_connection(force_new=True)
 
     async def write_candidate(
         self,
@@ -222,7 +261,12 @@ class DatabaseWriter:
         Raises:
             Exception: On database errors
         """
-        conn = self._get_connection()
+        # ALWAYS use a fresh connection for write operations
+        # This fixes "transaction is aborted" errors that occur when Lambda reuses
+        # a warm container with a cached connection in a bad state
+        conn = self._get_connection(force_new=True)
+        logger.info(f"Using fresh database connection for write operation")
+
         cursor = conn.cursor()
         verification = None
         completeness_audit = None
@@ -232,6 +276,7 @@ class DatabaseWriter:
             # No explicit begin() needed - transaction starts with first statement
 
             # Check for duplicates
+            logger.info("DB Step 1: Checking for duplicates")
             existing_id = None
             if check_duplicates:
                 existing_id = self._find_duplicate(
@@ -241,25 +286,100 @@ class DatabaseWriter:
                     parsed_cv.personal.first_name,
                     parsed_cv.personal.last_name,
                 )
+            logger.info(f"DB Step 1 complete: existing_id={existing_id}")
 
             if existing_id:
                 logger.info(f"Found duplicate candidate: {existing_id}")
                 candidate_id = existing_id
                 self._update_candidate(cursor, candidate_id, parsed_cv)
             else:
+                logger.info("DB Step 2: Inserting new candidate")
                 candidate_id = self._insert_candidate(cursor, parsed_cv, correlation_id, source_key)
+            logger.info(f"DB Step 2 complete: candidate_id={candidate_id}")
 
-            # Insert related records
-            self._insert_education(cursor, candidate_id, parsed_cv.education)
-            self._insert_experience(cursor, candidate_id, parsed_cv.experience)
+            # Insert related records - wrap each in try/except to identify exact failure point
+            # pg8000 defers errors, so we check after each step
+
+            try:
+                logger.info("DB Step 3: Inserting education")
+                self._insert_education(cursor, candidate_id, parsed_cv.education)
+                cursor.execute("SELECT 1")  # Force error surface
+                cursor.fetchone()
+                logger.info("DB Step 3 complete")
+            except Exception as e:
+                logger.error(f"DB Step 3 FAILED (education): {e}")
+                raise Exception(f"Failed inserting education: {e}")
+
+            try:
+                logger.info("DB Step 4: Inserting experience")
+                self._insert_experience(cursor, candidate_id, parsed_cv.experience)
+                cursor.execute("SELECT 1")  # Force error surface
+                cursor.fetchone()
+                logger.info("DB Step 4 complete")
+            except Exception as e:
+                logger.error(f"DB Step 4 FAILED (experience): {e}")
+                raise Exception(f"Failed inserting experience: {e}")
 
             # Insert skills, software, certifications - capturing unmatched items
-            skill_stats = self._insert_skills(cursor, candidate_id, parsed_cv.skills, correlation_id)
-            self._insert_languages(cursor, candidate_id, parsed_cv.languages)
-            cert_stats = self._insert_certifications(cursor, candidate_id, parsed_cv.certifications, correlation_id)
-            self._insert_driving_licenses(cursor, candidate_id, parsed_cv.driving_licenses)
-            software_stats = self._insert_software(cursor, candidate_id, parsed_cv.software, correlation_id)
-            self._insert_training(cursor, candidate_id, parsed_cv.training)
+            try:
+                logger.info("DB Step 5: Inserting skills")
+                skill_stats = self._insert_skills(cursor, candidate_id, parsed_cv.skills, correlation_id)
+                cursor.execute("SELECT 1")  # Force error surface
+                cursor.fetchone()
+                logger.info(f"DB Step 5 complete: {skill_stats}")
+            except Exception as e:
+                logger.error(f"DB Step 5 FAILED (skills): {e}")
+                raise Exception(f"Failed inserting skills: {e}")
+
+            try:
+                logger.info("DB Step 6: Inserting languages")
+                self._insert_languages(cursor, candidate_id, parsed_cv.languages)
+                cursor.execute("SELECT 1")  # Force error surface
+                cursor.fetchone()
+                logger.info("DB Step 6 complete")
+            except Exception as e:
+                logger.error(f"DB Step 6 FAILED (languages): {e}")
+                raise Exception(f"Failed inserting languages: {e}")
+
+            try:
+                logger.info("DB Step 7: Inserting certifications")
+                cert_stats = self._insert_certifications(cursor, candidate_id, parsed_cv.certifications, correlation_id)
+                cursor.execute("SELECT 1")  # Force error surface
+                cursor.fetchone()
+                logger.info(f"DB Step 7 complete: {cert_stats}")
+            except Exception as e:
+                logger.error(f"DB Step 7 FAILED (certifications): {e}")
+                raise Exception(f"Failed inserting certifications: {e}")
+
+            try:
+                logger.info("DB Step 8: Inserting driving licenses")
+                self._insert_driving_licenses(cursor, candidate_id, parsed_cv.driving_licenses)
+                cursor.execute("SELECT 1")  # Force error surface
+                cursor.fetchone()
+                logger.info("DB Step 8 complete")
+            except Exception as e:
+                logger.error(f"DB Step 8 FAILED (driving_licenses): {e}")
+                raise Exception(f"Failed inserting driving licenses: {e}")
+
+            try:
+                logger.info("DB Step 9: Inserting software")
+                software_stats = self._insert_software(cursor, candidate_id, parsed_cv.software, correlation_id)
+                cursor.execute("SELECT 1")  # Force error surface
+                cursor.fetchone()
+                logger.info(f"DB Step 9 complete: {software_stats}")
+            except Exception as e:
+                logger.error(f"DB Step 9 FAILED (software): {e}")
+                raise Exception(f"Failed inserting software: {e}")
+
+            try:
+                logger.info("DB Step 10: Inserting training")
+                self._insert_training(cursor, candidate_id, parsed_cv.training)
+                cursor.execute("SELECT 1")  # Force error surface
+                cursor.fetchone()
+                logger.info("DB Step 10 complete")
+            except Exception as e:
+                logger.error(f"DB Step 10 FAILED (training): {e}")
+                raise Exception(f"Failed inserting training: {e}")
 
             # Log unmatched item stats
             total_unmatched = skill_stats["unmatched"] + cert_stats["unmatched"] + software_stats["unmatched"]
@@ -340,12 +460,24 @@ class DatabaseWriter:
             return candidate_id, verification, completeness_audit
 
         except Exception as e:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception as rollback_err:
+                # Connection might be broken, reset it for next call
+                logger.warning(f"Rollback failed, resetting connection: {rollback_err}")
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._connection = None
             logger.error(f"Failed to write candidate: {e}")
             raise
 
         finally:
-            cursor.close()
+            try:
+                cursor.close()
+            except Exception:
+                pass  # Ignore cursor close errors
 
     def _find_duplicate(
         self,

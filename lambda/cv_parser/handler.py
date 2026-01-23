@@ -202,6 +202,8 @@ async def process_cv(
     candidate_id = None
     write_verification = None
     completeness_audit = None
+    db_write_failed = False
+    db_error_message = None
     if DB_SECRET_ARN:
         try:
             logger.info("Writing to PostgreSQL")
@@ -234,7 +236,9 @@ async def process_cv(
 
         except Exception as e:
             logger.error(f"Database write failed: {e}")
-            # Continue to try indexing anyway
+            db_write_failed = True
+            db_error_message = str(e)
+            # Mark as failed - don't continue to indexing
 
     # 8. Update state: INDEXING (include verification and audit info)
     indexing_data = {
@@ -246,6 +250,20 @@ async def process_cv(
     if completeness_audit:
         indexing_data["completeness_score"] = completeness_audit.completeness_score
         indexing_data["quality_level"] = completeness_audit.quality_level
+
+    # If DB write failed, mark as failed and return early
+    if db_write_failed:
+        update_state(correlation_id, ProcessingStatus.FAILED, {
+            "error": f"Database write failed: {db_error_message}",
+            "skills_count": len(parsed_cv.skills),
+            "experience_count": len(parsed_cv.experience),
+        })
+        return {
+            "statusCode": 500,
+            "correlation_id": correlation_id,
+            "status": ProcessingStatus.FAILED,
+            "error": f"Database write failed: {db_error_message}",
+        }
 
     update_state(correlation_id, ProcessingStatus.INDEXING, indexing_data)
 
