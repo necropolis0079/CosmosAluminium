@@ -453,6 +453,7 @@ def delete_candidate(conn, candidate_id: str) -> bool:
         "candidate_documents",
         "unmatched_taxonomy_items",
         "unmatched_cv_data",
+        "cv_quality_warnings",  # Session 46
     ]
 
     for table in tables:
