@@ -129,11 +129,15 @@ resource "aws_lambda_function" "candidates" {
 
   environment {
     variables = {
-      DB_SECRET_ARN   = aws_secretsmanager_secret.db_credentials.arn
-      DB_HOST         = aws_db_instance.main.address
-      DB_NAME         = aws_db_instance.main.db_name
-      DB_PORT         = tostring(aws_db_instance.main.port)
-      AWS_REGION_NAME = var.aws_region
+      DB_SECRET_ARN        = aws_secretsmanager_secret.db_credentials.arn
+      DB_HOST              = aws_db_instance.main.address
+      DB_NAME              = aws_db_instance.main.db_name
+      DB_PORT              = tostring(aws_db_instance.main.port)
+      AWS_REGION_NAME      = var.aws_region
+      CV_UPLOADS_BUCKET    = aws_s3_bucket.cv_uploads.id
+      STATE_TABLE          = aws_dynamodb_table.cv_processing_state.name
+      CLOUDFRONT_DOMAIN    = aws_cloudfront_distribution.cv_uploads.domain_name
+      USE_CLOUDFRONT       = "true"
     }
   }
 
@@ -244,6 +248,15 @@ resource "aws_apigatewayv2_route" "test_candidates_get" {
 resource "aws_apigatewayv2_route" "test_candidates_delete" {
   api_id    = aws_apigatewayv2_api.main.id
   route_key = "DELETE /test/candidates/{candidate_id}"
+  target    = "integrations/${aws_apigatewayv2_integration.candidates.id}"
+
+  authorization_type = "NONE"
+}
+
+# GET /test/candidates/{candidate_id}/cv - Get presigned URL for original CV file
+resource "aws_apigatewayv2_route" "test_candidates_cv" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /test/candidates/{candidate_id}/cv"
   target    = "integrations/${aws_apigatewayv2_integration.candidates.id}"
 
   authorization_type = "NONE"

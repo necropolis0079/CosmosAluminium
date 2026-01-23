@@ -2,14 +2,17 @@
 Candidates API Lambda Handler.
 
 Lists, retrieves, and deletes candidates from PostgreSQL database.
+Also provides presigned URLs for viewing original CV files.
 """
 
 import json
 import logging
 import os
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import unquote
 
 import boto3
 import pg8000.native
@@ -23,6 +26,14 @@ DB_HOST = os.environ.get("DB_HOST", "lcmgo-cagenai-prod-postgres.c324io6eq6iv.eu
 DB_NAME = os.environ.get("DB_NAME", "cagenai")
 DB_PORT = int(os.environ.get("DB_PORT", "5432"))
 AWS_REGION = os.environ.get("AWS_REGION_NAME", "eu-north-1")
+CV_UPLOADS_BUCKET = os.environ.get("CV_UPLOADS_BUCKET", "lcmgo-cagenai-prod-cv-uploads-eun1")
+STATE_TABLE = os.environ.get("STATE_TABLE", "lcmgo-cagenai-prod-cv-processing-state")
+CLOUDFRONT_DOMAIN = os.environ.get("CLOUDFRONT_DOMAIN", "")
+USE_CLOUDFRONT = os.environ.get("USE_CLOUDFRONT", "false").lower() == "true"
+
+# AWS clients
+s3_client = boto3.client("s3", region_name=AWS_REGION)
+dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 
 
 def get_db_credentials() -> dict:
@@ -73,7 +84,7 @@ def build_response(status_code: int, body: dict) -> dict:
     }
 
 
-def list_candidates(conn, limit: int = 100, offset: int = 0) -> list:
+def list_candidates(conn, limit: int = 500, offset: int = 0) -> list:
     """List all candidates with their full data."""
 
     # Get candidates with basic info
@@ -408,6 +419,133 @@ def get_candidates_count(conn) -> int:
     return result[0][0] if result else 0
 
 
+def get_cv_url(conn, candidate_id: str) -> dict | None:
+    """
+    Get URL for candidate's original CV file.
+
+    Uses correlation_id from candidate tags to find s3_key in DynamoDB,
+    then generates either a CloudFront URL (if enabled) or S3 presigned URL.
+
+    CloudFront provides:
+    - DDoS protection
+    - Edge caching for faster downloads
+    - HTTPS enforcement
+    - Geo-restriction (EU only for GDPR)
+
+    Returns:
+        dict with cv_url, filename, uploaded_at, or None if not found
+    """
+    # Get correlation_id from candidate's tags
+    query = """
+        SELECT tags, created_at FROM candidates WHERE id = :candidate_id
+    """
+    rows = conn.run(query, candidate_id=candidate_id)
+    if not rows:
+        return None
+
+    tags = rows[0][0]  # tags is an array
+    created_at = rows[0][1]
+
+    # Extract correlation_id from tags
+    correlation_id = None
+    if tags:
+        for tag in tags:
+            if tag and tag.startswith("correlation_id:"):
+                correlation_id = tag.split(":", 1)[1]
+                break
+
+    if not correlation_id:
+        logger.warning(f"No correlation_id found for candidate {candidate_id}")
+        return None
+
+    # Query DynamoDB for s3_key
+    table = dynamodb.Table(STATE_TABLE)
+    try:
+        response = table.get_item(Key={"cv_id": correlation_id})
+        item = response.get("Item")
+        if not item:
+            logger.warning(f"No DynamoDB entry for correlation_id {correlation_id}")
+            return None
+
+        s3_key = item.get("s3_key")
+        if not s3_key:
+            logger.warning(f"No s3_key in DynamoDB for correlation_id {correlation_id}")
+            return None
+
+    except Exception as e:
+        logger.error(f"DynamoDB query failed: {e}")
+        return None
+
+    # Decode URL-encoded s3_key if needed
+    if "%" in s3_key:
+        s3_key = unquote(s3_key)
+
+    # Extract filename from s3_key
+    filename = s3_key.split("/")[-1] if "/" in s3_key else s3_key
+
+    # Generate URL based on configuration
+    if USE_CLOUDFRONT and CLOUDFRONT_DOMAIN:
+        # Use CloudFront URL with S3 presigned query strings
+        # CloudFront forwards the query strings to S3 for authentication
+        try:
+            # Generate presigned URL parameters
+            presigned_url = s3_client.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": CV_UPLOADS_BUCKET,
+                    "Key": s3_key,
+                    "ResponseContentDisposition": f'inline; filename="{filename}"',
+                },
+                ExpiresIn=3600,  # 1 hour
+            )
+            # Extract query string from presigned URL
+            from urllib.parse import urlparse, urlencode, parse_qs
+            parsed = urlparse(presigned_url)
+            query_string = parsed.query
+
+            # Build CloudFront URL with S3 auth query params
+            # Note: CloudFront origin request policy must forward query strings
+            cloudfront_url = f"https://{CLOUDFRONT_DOMAIN}/{s3_key}?{query_string}"
+
+            logger.info(f"Generated CloudFront URL for {filename}")
+
+            return {
+                "cv_url": cloudfront_url,
+                "filename": filename,
+                "s3_key": s3_key,
+                "uploaded_at": created_at.isoformat() if created_at else None,
+                "expires_in": 3600,
+                "delivery": "cloudfront",
+            }
+        except Exception as e:
+            logger.warning(f"CloudFront URL generation failed, falling back to S3: {e}")
+            # Fall through to S3 presigned URL
+
+    # Generate S3 presigned URL (fallback or default)
+    try:
+        presigned_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": CV_UPLOADS_BUCKET,
+                "Key": s3_key,
+                "ResponseContentDisposition": f'inline; filename="{filename}"',
+            },
+            ExpiresIn=3600,  # 1 hour
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate presigned URL: {e}")
+        return None
+
+    return {
+        "cv_url": presigned_url,
+        "filename": filename,
+        "s3_key": s3_key,
+        "uploaded_at": created_at.isoformat() if created_at else None,
+        "expires_in": 3600,
+        "delivery": "s3",
+    }
+
+
 def handler(event, context):
     """Lambda handler for candidates API."""
     logger.info(f"Event: {json.dumps(event)}")
@@ -426,7 +564,7 @@ def handler(event, context):
 
         # GET /test/candidates - List all candidates
         if http_method == "GET" and not path_params.get("candidate_id"):
-            limit = int(query_params.get("limit", 100))
+            limit = int(query_params.get("limit", 500))
             offset = int(query_params.get("offset", 0))
 
             candidates = list_candidates(conn, limit=limit, offset=offset)
@@ -440,6 +578,18 @@ def handler(event, context):
                 "limit": limit,
                 "offset": offset,
             })
+
+        # GET /test/candidates/{candidate_id}/cv - Get CV download URL
+        if http_method == "GET" and path_params.get("candidate_id") and path.endswith("/cv"):
+            candidate_id = path_params["candidate_id"]
+            cv_info = get_cv_url(conn, candidate_id)
+
+            conn.close()
+
+            if not cv_info:
+                return build_response(404, {"error": "CV not found for this candidate"})
+
+            return build_response(200, cv_info)
 
         # GET /test/candidates/{candidate_id} - Get single candidate
         if http_method == "GET" and path_params.get("candidate_id"):

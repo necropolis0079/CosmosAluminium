@@ -5,7 +5,7 @@
 
 // Configuration
 const API_BASE = 'https://iw9oxe3w4b.execute-api.eu-north-1.amazonaws.com/v1';
-const MAX_FILES = 10;
+const MAX_FILES = 500; // Increased from 10 to allow bulk uploads
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const POLL_INTERVAL = 2000;
 
@@ -143,12 +143,15 @@ function handleFiles(files) {
         return true;
     });
 
+    // Add all valid files (up to MAX_FILES total in queue)
     const remaining = MAX_FILES - fileQueue.length;
+    const filesToAdd = validFiles.slice(0, remaining);
+
     if (validFiles.length > remaining) {
-        alert(`Can only add ${remaining} more files (max ${MAX_FILES})`);
+        alert(`Queue limit reached. Adding ${filesToAdd.length} of ${validFiles.length} files.`);
     }
 
-    validFiles.slice(0, remaining).forEach(file => {
+    filesToAdd.forEach(file => {
         if (!fileQueue.find(f => f.name === file.name)) {
             fileQueue.push(file);
         }
@@ -1778,12 +1781,19 @@ function renderCandidateListCard(candidate) {
                 </div>
             </div>
             <div class="candidate-list-actions">
-                <button class="btn-icon btn-view" onclick="viewCandidateCV('${candidate.id}')" title="View CV">
+                <button class="btn-icon btn-view" onclick="viewCandidateCV('${candidate.id}')" title="View Parsed Data">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                         <polyline points="14 2 14 8 20 8"></polyline>
                         <line x1="16" y1="13" x2="8" y2="13"></line>
                         <line x1="16" y1="17" x2="8" y2="17"></line>
+                    </svg>
+                </button>
+                <button class="btn-icon btn-download" data-cv-btn="${candidate.id}" onclick="viewOriginalCV('${candidate.id}')" title="View Original CV">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
                     </svg>
                 </button>
                 <button class="btn-icon btn-edit" onclick="editCandidate('${candidate.id}')" title="Edit">
@@ -1844,7 +1854,7 @@ function toggleRoleGroup(header) {
     group.classList.toggle('collapsed');
 }
 
-// View original CV file
+// View parsed candidate data (extracted info)
 function viewCandidateCV(candidateId) {
     const candidate = allCandidates.find(c => c.id === candidateId);
     if (!candidate) {
@@ -1852,13 +1862,7 @@ function viewCandidateCV(candidateId) {
         return;
     }
 
-    // If we have a CV URL, open it
-    if (candidate.cv_url) {
-        window.open(candidate.cv_url, '_blank');
-        return;
-    }
-
-    // Otherwise, show candidate details in Results tab
+    // Show candidate details in Results tab
     if (candidate.data) {
         // Navigate to Results page and show this candidate
         completedResults = completedResults.filter(r => r.correlationId !== candidate.id);
@@ -1878,7 +1882,64 @@ function viewCandidateCV(candidateId) {
         document.querySelector('[data-page="results"]').classList.add('active');
         document.getElementById('resultsPage').classList.add('active');
     } else {
-        alert('CV file not available. The original file may need to be retrieved from the server.');
+        alert('Parsed data not available for this candidate.');
+    }
+}
+
+// View original CV file (PDF/DOCX) via presigned URL
+async function viewOriginalCV(candidateId) {
+    const candidate = allCandidates.find(c => c.id === candidateId);
+    if (!candidate) {
+        alert('Candidate not found');
+        return;
+    }
+
+    // Get the database ID (candidate_id) for API call
+    const dbId = candidate.candidate_id || candidate.id;
+
+    try {
+        // Show loading state
+        const btn = document.querySelector(`[data-cv-btn="${candidateId}"]`);
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-small"></span>';
+        }
+
+        // Call API to get presigned URL
+        const response = await fetch(`${API_BASE}/test/candidates/${dbId}/cv`);
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                alert('Original CV file not found. The file may have been deleted from storage.');
+            } else {
+                const error = await response.json().catch(() => ({}));
+                alert(`Failed to get CV: ${error.error || 'Unknown error'}`);
+            }
+            return;
+        }
+
+        const data = await response.json();
+
+        if (data.cv_url) {
+            // Open presigned URL in new tab
+            window.open(data.cv_url, '_blank');
+        } else {
+            alert('CV URL not available');
+        }
+    } catch (error) {
+        console.error('Error fetching CV URL:', error);
+        alert('Failed to retrieve CV file. Please try again.');
+    } finally {
+        // Restore button
+        const btn = document.querySelector(`[data-cv-btn="${candidateId}"]`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>`;
+        }
     }
 }
 
