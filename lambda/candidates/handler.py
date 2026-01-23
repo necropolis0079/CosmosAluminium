@@ -12,7 +12,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 
 import boto3
 import pg8000.native
@@ -483,6 +483,25 @@ def get_cv_url(conn, candidate_id: str) -> dict | None:
     # Extract filename from s3_key
     filename = s3_key.split("/")[-1] if "/" in s3_key else s3_key
 
+    # Build Content-Disposition header with proper encoding for non-ASCII filenames
+    # RFC 5987: Use filename* with UTF-8 encoding for non-ASCII characters
+    def build_content_disposition(fname: str) -> str:
+        # Check if filename contains non-ASCII characters
+        try:
+            fname.encode('ascii')
+            # ASCII-only filename - simple format
+            return f'inline; filename="{fname}"'
+        except UnicodeEncodeError:
+            # Non-ASCII filename - use RFC 5987 encoding
+            # Format: inline; filename="fallback.ext"; filename*=UTF-8''encoded_name
+            ext = fname.rsplit('.', 1)[-1] if '.' in fname else 'pdf'
+            ascii_fallback = f"cv_document.{ext}"
+            # URL-encode the filename for filename* parameter
+            encoded_fname = quote(fname, safe='')
+            return f"inline; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_fname}"
+
+    content_disposition = build_content_disposition(filename)
+
     # Generate URL based on configuration
     if USE_CLOUDFRONT and CLOUDFRONT_DOMAIN:
         # Use CloudFront URL with S3 presigned query strings
@@ -494,7 +513,7 @@ def get_cv_url(conn, candidate_id: str) -> dict | None:
                 Params={
                     "Bucket": CV_UPLOADS_BUCKET,
                     "Key": s3_key,
-                    "ResponseContentDisposition": f'inline; filename="{filename}"',
+                    "ResponseContentDisposition": content_disposition,
                 },
                 ExpiresIn=3600,  # 1 hour
             )
@@ -528,7 +547,7 @@ def get_cv_url(conn, candidate_id: str) -> dict | None:
             Params={
                 "Bucket": CV_UPLOADS_BUCKET,
                 "Key": s3_key,
-                "ResponseContentDisposition": f'inline; filename="{filename}"',
+                "ResponseContentDisposition": content_disposition,
             },
             ExpiresIn=3600,  # 1 hour
         )
