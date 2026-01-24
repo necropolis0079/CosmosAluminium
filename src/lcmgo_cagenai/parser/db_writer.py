@@ -158,6 +158,29 @@ def _ensure_name(first_name: str | None, last_name: str | None, raw_text: str | 
     return first_name, last_name
 
 
+def _sanitize_json(obj: Any) -> Any:
+    """
+    Recursively sanitize JSON object, removing null bytes from all strings.
+
+    PostgreSQL cannot store null bytes (0x00) in text/json fields.
+
+    Args:
+        obj: JSON object (dict, list, str, or primitive)
+
+    Returns:
+        Sanitized JSON object
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_json(item) for item in obj]
+    elif isinstance(obj, str):
+        # Remove null bytes
+        return obj.replace('\x00', '')
+    else:
+        return obj
+
+
 @dataclass
 class WriteVerification:
     """
@@ -1807,6 +1830,8 @@ class DatabaseWriter:
             True if successful, False otherwise
         """
         try:
+            # Sanitize JSON to remove null bytes that PostgreSQL can't handle
+            sanitized_json = _sanitize_json(raw_json)
             cursor.execute(
                 """
                 UPDATE candidates
@@ -1814,7 +1839,7 @@ class DatabaseWriter:
                 WHERE id = %s
                 """,
                 (
-                    json.dumps(raw_json, ensure_ascii=False),
+                    json.dumps(sanitized_json, ensure_ascii=False),
                     str(candidate_id),
                 ),
             )
