@@ -26,6 +26,138 @@ from .taxonomy_mapper import normalize_text
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Data Sanitization Helpers
+# =============================================================================
+
+# Greek lookalike characters that cause email validation failures
+GREEK_LOOKALIKES = {
+    'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I',
+    'Κ': 'K', 'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T',
+    'Υ': 'Y', 'Χ': 'X',
+    'α': 'a', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ν': 'n', 'ο': 'o',
+    'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x',
+}
+
+
+def _sanitize_string(value: str | None, max_length: int | None = None) -> str | None:
+    """
+    Sanitize a string value for database insertion.
+
+    - Strips null bytes (0x00) that cause UTF-8 encoding errors
+    - Optionally truncates to max_length
+
+    Args:
+        value: String to sanitize
+        max_length: Maximum length (optional)
+
+    Returns:
+        Sanitized string or None
+    """
+    if value is None:
+        return None
+
+    # Strip null bytes
+    value = value.replace('\x00', '')
+
+    # Strip and normalize whitespace
+    value = ' '.join(value.split())
+
+    # Truncate if needed
+    if max_length and len(value) > max_length:
+        value = value[:max_length]
+
+    return value if value else None
+
+
+def _sanitize_email(email: str | None) -> str | None:
+    """
+    Sanitize email address for database insertion.
+
+    Fixes common issues:
+    - Greek lookalike characters (Μ→M, Ο→O, etc.)
+    - Null bytes
+    - Common typos (missing dots in domains)
+
+    Args:
+        email: Email to sanitize
+
+    Returns:
+        Sanitized email or None
+    """
+    if not email:
+        return None
+
+    # Strip null bytes and whitespace
+    email = email.replace('\x00', '').strip()
+
+    # Replace Greek lookalike characters
+    for greek, latin in GREEK_LOOKALIKES.items():
+        email = email.replace(greek, latin)
+
+    # Common domain typo fixes (missing dots)
+    domain_fixes = {
+        '@gmailcom': '@gmail.com',
+        '@yahoocom': '@yahoo.com',
+        '@hotmailcom': '@hotmail.com',
+        '@outlookcom': '@outlook.com',
+        '@windowslivecom': '@windowslive.com',
+        '@liveco': '@live.com',
+    }
+    email_lower = email.lower()
+    for typo, fix in domain_fixes.items():
+        if typo in email_lower:
+            # Find the position and replace preserving case
+            pos = email_lower.find(typo)
+            email = email[:pos] + fix
+            break
+
+    return email if email else None
+
+
+def _ensure_name(first_name: str | None, last_name: str | None, raw_text: str | None) -> tuple[str, str]:
+    """
+    Ensure first_name and last_name are not null.
+
+    Falls back to extracting from raw_text or using "Unknown".
+
+    Args:
+        first_name: Parsed first name (may be None)
+        last_name: Parsed last name (may be None)
+        raw_text: Raw CV text for fallback extraction
+
+    Returns:
+        Tuple of (first_name, last_name), never None
+    """
+    # Sanitize existing names
+    first_name = _sanitize_string(first_name, max_length=100)
+    last_name = _sanitize_string(last_name, max_length=100)
+
+    # If both are missing, try to extract from raw_text
+    if not first_name and not last_name and raw_text:
+        # Try to find a name pattern in first few lines
+        lines = raw_text.strip().split('\n')[:5]
+        for line in lines:
+            words = line.strip().split()
+            if 2 <= len(words) <= 4:
+                # Could be a name - check if it's all letters
+                if all(w.isalpha() for w in words):
+                    first_name = words[0]
+                    last_name = ' '.join(words[1:])
+                    break
+
+    # Final fallbacks
+    if not first_name:
+        first_name = "Unknown"
+        logger.warning("Using fallback first_name='Unknown' - LLM failed to extract name")
+
+    if not last_name:
+        last_name = "Unknown"
+        logger.warning("Using fallback last_name='Unknown' - LLM failed to extract name")
+
+    return first_name, last_name
+
+
 @dataclass
 class WriteVerification:
     """
@@ -556,6 +688,30 @@ class DatabaseWriter:
         """Insert new candidate record."""
         personal = parsed_cv.personal
 
+        # Sanitize and ensure names are not null
+        first_name, last_name = _ensure_name(
+            personal.first_name,
+            personal.last_name,
+            parsed_cv.raw_cv_text
+        )
+
+        # Sanitize email (Greek lookalikes, missing dots, null bytes)
+        email = _sanitize_email(personal.email)
+        email_secondary = _sanitize_email(personal.email_secondary)
+
+        # Sanitize other string fields
+        phone = _sanitize_string(personal.phone, max_length=50)
+        phone_secondary = _sanitize_string(personal.phone_secondary, max_length=50)
+        nationality = _sanitize_string(personal.nationality, max_length=100)
+        address_street = _sanitize_string(personal.address_street, max_length=255)
+        address_city = _sanitize_string(personal.address_city, max_length=100)
+        address_region = _sanitize_string(personal.address_region, max_length=100)
+        address_postal_code = _sanitize_string(personal.address_postal_code, max_length=20)
+        address_country = _sanitize_string(personal.address_country, max_length=100) or 'Greece'
+
+        # Sanitize raw_cv_text (strip null bytes)
+        raw_cv_text = _sanitize_string(parsed_cv.raw_cv_text)
+
         cursor.execute(
             """
             INSERT INTO candidates (
@@ -576,23 +732,23 @@ class DatabaseWriter:
             RETURNING id
             """,
             (
-                personal.first_name,
-                personal.last_name,
-                normalize_text(personal.first_name) if personal.first_name else None,
-                normalize_text(personal.last_name) if personal.last_name else None,
-                personal.email,
-                personal.email_secondary,
-                personal.phone,
-                personal.phone_secondary,
+                first_name,
+                last_name,
+                normalize_text(first_name) if first_name else None,
+                normalize_text(last_name) if last_name else None,
+                email,
+                email_secondary,
+                phone,
+                phone_secondary,
                 personal.date_of_birth,
                 personal.gender.value if personal.gender else "unknown",
                 personal.marital_status.value if personal.marital_status else "unknown",
-                personal.nationality,
-                personal.address_street,
-                personal.address_city,
-                personal.address_region,
-                personal.address_postal_code,
-                personal.address_country,
+                nationality,
+                address_street,
+                address_city,
+                address_region,
+                address_postal_code,
+                address_country,
                 personal.employment_status.value if personal.employment_status else "unknown",
                 personal.availability_status.value if personal.availability_status else "unknown",
                 personal.military_status.value if personal.military_status else "unknown",
@@ -604,7 +760,7 @@ class DatabaseWriter:
                 "parsed",  # processing_status
                 parsed_cv.completeness_score,
                 self._get_quality_level(parsed_cv.completeness_score),
-                parsed_cv.raw_cv_text,
+                raw_cv_text,
                 [f"correlation_id:{correlation_id}"],
             ),
         )
@@ -620,6 +776,14 @@ class DatabaseWriter:
     ) -> None:
         """Update existing candidate record."""
         personal = parsed_cv.personal
+
+        # Sanitize fields
+        first_name = _sanitize_string(personal.first_name, max_length=100)
+        last_name = _sanitize_string(personal.last_name, max_length=100)
+        email = _sanitize_email(personal.email)
+        phone = _sanitize_string(personal.phone, max_length=50)
+        address_city = _sanitize_string(personal.address_city, max_length=100)
+        address_region = _sanitize_string(personal.address_region, max_length=100)
 
         cursor.execute(
             """
@@ -637,12 +801,12 @@ class DatabaseWriter:
             WHERE id = %s
             """,
             (
-                personal.first_name,
-                personal.last_name,
-                personal.email,
-                personal.phone,
-                personal.address_city,
-                personal.address_region,
+                first_name,
+                last_name,
+                email,
+                phone,
+                address_city,
+                address_region,
                 parsed_cv.completeness_score,
                 str(candidate_id),
             ),
@@ -675,6 +839,19 @@ class DatabaseWriter:
                 )
                 start_date, end_date = end_date, start_date
 
+            # Sanitize string fields (null bytes, truncation)
+            institution_name = _sanitize_string(edu.institution_name, max_length=255)
+            institution_city = _sanitize_string(edu.institution_city, max_length=100)
+            institution_country = _sanitize_string(edu.institution_country, max_length=100)
+            degree_title = _sanitize_string(edu.degree_title, max_length=255)
+            field_of_study_detail = _sanitize_string(edu.field_of_study_detail, max_length=255)
+            specialization = _sanitize_string(edu.specialization, max_length=255)
+            grade_value = _sanitize_string(edu.grade_value, max_length=20)  # VARCHAR(20)
+            grade_scale = _sanitize_string(edu.grade_scale, max_length=50)
+            thesis_title = _sanitize_string(edu.thesis_title, max_length=500)
+            honors = _sanitize_string(edu.honors, max_length=255)
+            raw_text = _sanitize_string(edu.raw_text)
+
             cursor.execute(
                 """
                 INSERT INTO candidate_education (
@@ -692,25 +869,25 @@ class DatabaseWriter:
                 """,
                 (
                     str(candidate_id),
-                    edu.institution_name,
-                    normalize_text(edu.institution_name) if edu.institution_name else None,
-                    edu.institution_city,
-                    edu.institution_country,
+                    institution_name,
+                    normalize_text(institution_name) if institution_name else None,
+                    institution_city,
+                    institution_country,
                     edu.degree_level.value if edu.degree_level else None,
-                    edu.degree_title,
-                    normalize_text(edu.degree_title) if edu.degree_title else None,
+                    degree_title,
+                    normalize_text(degree_title) if degree_title else None,
                     edu.field_of_study.value if edu.field_of_study else None,
-                    edu.field_of_study_detail,
-                    edu.specialization,
+                    field_of_study_detail,
+                    specialization,
                     start_date,
                     end_date,
                     edu.is_current,
                     edu.graduation_year,
-                    edu.grade_value,
-                    edu.grade_scale,
-                    edu.thesis_title,
-                    edu.honors,
-                    edu.raw_text,
+                    grade_value,
+                    grade_scale,
+                    thesis_title,
+                    honors,
+                    raw_text,
                     edu.confidence,
                 ),
             )
@@ -730,6 +907,22 @@ class DatabaseWriter:
                 )
                 start_date, end_date = end_date, start_date
 
+            # Sanitize string fields (null bytes, truncation)
+            company_name = _sanitize_string(exp.company_name, max_length=255)
+            company_industry = _sanitize_string(exp.company_industry, max_length=100)
+            company_city = _sanitize_string(exp.company_city, max_length=100)
+            company_country = _sanitize_string(exp.company_country, max_length=100)
+            job_title = _sanitize_string(exp.job_title, max_length=255)
+            department = _sanitize_string(exp.department, max_length=100)
+            description = _sanitize_string(exp.description)
+            reports_to = _sanitize_string(exp.reports_to, max_length=255)
+            raw_text = _sanitize_string(exp.raw_text)
+
+            # Sanitize array fields
+            responsibilities = [_sanitize_string(r) for r in (exp.responsibilities or []) if r]
+            achievements = [_sanitize_string(a) for a in (exp.achievements or []) if a]
+            technologies_used = [_sanitize_string(t) for t in (exp.technologies_used or []) if t]
+
             cursor.execute(
                 """
                 INSERT INTO candidate_experience (
@@ -748,26 +941,26 @@ class DatabaseWriter:
                 """,
                 (
                     str(candidate_id),
-                    exp.company_name,
-                    normalize_text(exp.company_name) if exp.company_name else None,
-                    exp.company_industry,
-                    exp.company_city,
-                    exp.company_country,
-                    exp.job_title,
-                    normalize_text(exp.job_title) if exp.job_title else None,
+                    company_name,
+                    normalize_text(company_name) if company_name else None,
+                    company_industry,
+                    company_city,
+                    company_country,
+                    job_title,
+                    normalize_text(job_title) if job_title else None,
                     str(exp.role_id) if exp.role_id else None,
-                    exp.department,
+                    department,
                     exp.employment_type.value if exp.employment_type else None,
                     start_date,
                     end_date,
                     exp.is_current,
-                    exp.description,
-                    exp.responsibilities or [],
-                    exp.achievements or [],
-                    exp.technologies_used or [],
+                    description,
+                    responsibilities,
+                    achievements,
+                    technologies_used,
                     exp.team_size,
-                    exp.reports_to,
-                    exp.raw_text,
+                    reports_to,
+                    raw_text,
                     exp.confidence,
                 ),
             )
