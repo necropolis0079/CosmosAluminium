@@ -13,6 +13,8 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+
+from dateutil.relativedelta import relativedelta
 from typing import Any
 from uuid import UUID
 
@@ -179,6 +181,46 @@ def _sanitize_json(obj: Any) -> Any:
         return obj.replace('\x00', '')
     else:
         return obj
+
+
+def _calculate_duration_months(
+    start_date: date | None,
+    end_date: date | None,
+    is_current: bool
+) -> int | None:
+    """
+    Calculate experience duration in months.
+
+    This is CRITICAL for HR Intelligence accuracy - without duration_months,
+    all candidates show 0 years of experience.
+
+    Args:
+        start_date: Job start date
+        end_date: Job end date (None if current)
+        is_current: Whether this is current employment
+
+    Returns:
+        Duration in months, or None if start_date is missing
+    """
+    if not start_date:
+        return None
+
+    # Determine end date
+    if is_current or end_date is None:
+        calc_end = date.today()
+    else:
+        calc_end = end_date
+
+    # Ensure end is after start (dates may have been swapped already)
+    if calc_end < start_date:
+        start_date, calc_end = calc_end, start_date
+
+    # Calculate difference using relativedelta
+    delta = relativedelta(calc_end, start_date)
+    duration = (delta.years * 12) + delta.months
+
+    # Minimum 1 month if dates are valid
+    return max(duration, 1) if duration >= 0 else None
 
 
 @dataclass
@@ -916,7 +958,7 @@ class DatabaseWriter:
             )
 
     def _insert_experience(self, cursor: Any, candidate_id: UUID, experience: list) -> None:
-        """Insert experience records."""
+        """Insert experience records with duration_months calculation."""
         for exp in experience:
             # Validate and fix date range if needed
             start_date = exp.start_date
@@ -929,6 +971,14 @@ class DatabaseWriter:
                     f"for '{exp.job_title}' at '{exp.company_name}'. Swapping dates."
                 )
                 start_date, end_date = end_date, start_date
+
+            # Calculate duration_months - CRITICAL for HR Intelligence accuracy
+            duration_months = _calculate_duration_months(start_date, end_date, exp.is_current)
+            if duration_months:
+                logger.debug(
+                    f"Experience duration: {duration_months} months "
+                    f"for '{exp.job_title}' at '{exp.company_name}'"
+                )
 
             # Sanitize string fields (null bytes, truncation)
             company_name = _sanitize_string(exp.company_name, max_length=255)
@@ -953,13 +1003,13 @@ class DatabaseWriter:
                     company_industry, company_city, company_country,
                     job_title, job_title_normalized, role_id,
                     department, employment_type,
-                    start_date, end_date, is_current,
+                    start_date, end_date, is_current, duration_months,
                     description, responsibilities, achievements, technologies_used,
                     team_size, reports_to,
                     raw_text, confidence_score
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -977,6 +1027,7 @@ class DatabaseWriter:
                     start_date,
                     end_date,
                     exp.is_current,
+                    duration_months,
                     description,
                     responsibilities,
                     achievements,
