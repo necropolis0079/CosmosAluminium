@@ -945,7 +945,7 @@ async function sendChatMessage() {
                 execute: true,
                 limit: 50,
                 include_hr_analysis: includeHrAnalysis,
-                async_hr: includeHrAnalysis  // Use async mode when HR analysis is enabled
+                async_hr: includeHrAnalysis  // Uses Lambda VPC endpoint for async self-invocation
             }),
             signal: controller.signal
         });
